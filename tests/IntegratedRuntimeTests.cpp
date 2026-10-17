@@ -301,5 +301,34 @@ int main(){try{
         CHECK(runtime.SelectBackend(Backend::RemoteModern,4,15502));
         CHECK(!y.bridge.Pending() && y.sends==1 && f->requests==0);
     }
+    { // A copied native tool break waits for BOTH wrapper/real hand and the
+      // existing authoritative server count sample. Never modern fallback.
+        LegacyFixture y;ActorFixture a;auto setup=NewRuntime(y,a);
+        Put(&f->source,34,std::uint8_t{1});Put(&f->destination,34,std::uint8_t{1});
+        Put(&f->source,64,std::uint8_t{1});Put(&f->destination,64,std::uint8_t{1});
+        y.actualSource=f->source;y.actualDestination=f->destination;y.expectedTotal=1;f->expectedAmount=1;
+        auto api=LegacyNative();api.getItem=All;api.stack.merge=[](void const*,void const*){return false;};
+        WorldApi worldApi{LocalPlayer,World,Input,Top,Name,Real,[](void const* p){return Capacity(p)==1;},FindNativeProfile(GameVersion::V52)};
+        Runtime runtime{api,worldApi,base,y.bridge};auto now=GetTickCount64();
+        CHECK(!runtime.Tick(f->manager,true,true,Config{},now,1));
+        auto s=ReadActorIdentity(f->player);s.registry=0x1200;s.role=ActorRole::Server;
+        y.bridge.EndServer(s,{},-1,now,FixtureCounts());
+        CHECK(!runtime.Tick(f->manager,true,true,Config{},now,1));
+        OwnedStack working;CHECK(working.Copy(api.stack,&f->destination));
+        auto capture=runtime.BeginToolHurt(working.Get(),f->player,true,true,Config{},1);CHECK(capture);
+        Put(const_cast<void*>(working.Get()),34,std::uint8_t{});
+        CHECK(runtime.EndToolHurt(*capture,working.Get(),true,true,Config{},1));
+        CHECK(!runtime.Tick(f->manager,true,true,Config{},now+1,1) && y.sends==0);
+        Put(&f->destination,34,std::uint8_t{});y.actualDestination=f->destination;
+        CHECK(!runtime.Tick(f->manager,true,true,Config{},now+2,1) && y.sends==0); // stale server count1
+        y.bridge.EndServer(s,{},-1,now+3,FixtureCounts());
+        CHECK(runtime.Tick(f->manager,true,true,Config{},now+4,1)==TransferResult::Queued);
+        CHECK(y.sends==1 && f->requests==0 && y.bridge.Pending() && !y.bridge.Poll());
+        auto ticket=y.bridge.BeginServer(s,-4,now+5);CHECK(ticket.token);
+        y.bridge.EndServer(s,ticket,1,now+6,FixtureCounts());
+        CHECK(!runtime.Tick(f->manager,true,true,Config{},now+7,1) && !y.bridge.Pending());
+        bool toolAccepted=false;while(auto e=runtime.TakeDiagnostic())if(e->kind==DiagnosticKind::Response){CHECK(e->nativeStatus==1);toolAccepted=true;}
+        CHECK(toolAccepted && y.sends==1);runtime.Reset();
+    }
     std::cout<<"Integrated runtime tests passed\n";return 0;
 }catch(std::exception const& e){std::cerr<<e.what()<<'\n';return 1;}}

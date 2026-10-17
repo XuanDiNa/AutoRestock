@@ -5,9 +5,10 @@
 #include <memory>
 #include <optional>
 #include "UseTracker.h"
+#include "Integrated.h"
 namespace autorestock {
 enum class DiagnosticKind { Request,Response,Reconciled,Timeout,ContextReset,NativeResult,PredictionSettled,PredictionStopped,NativeWrite,PostStopSummary,
-    PredictionPaused,ResampleBaseline,ResampleReady,PredictionRearmed };
+    PredictionPaused,ResampleBaseline,ResampleReady,PredictionRearmed,ToolTrace };
 enum class ResetCause {
     Explicit,SelectionWorldGate,TickWorldGate,ConfigDisabled,BackendDisabled,ContextChanged,
     ConfigChanged,StackCopyFailed,IdentityFailed,EndUseConfigChanged,EndUseWorldGate,
@@ -29,6 +30,32 @@ struct NativeWrite {
     bool callerKnown{};
     bool postStop{}; // diagnostic phase only, never acceptance or a policy input
     WriteStackState before,input,after;
+};
+// Read-only scalar observations. No owning stack, item metadata or native
+// address is retained, and none of these values authorizes a transfer.
+struct ToolObservation {
+    bool readable{},empty{},damageable{};
+    int count=-1,capacity=-1;
+    NativeUseStamp native;
+    bool operator==(ToolObservation const& b) const noexcept{
+        return readable==b.readable && empty==b.empty && damageable==b.damageable && count==b.count &&
+            capacity==b.capacity && native.variant==b.native.variant && native.idKnown==b.native.idKnown && native.id==b.native.id;
+    }
+};
+enum class ToolStage { Sample,Operation,Use,Gate,Policy,Reset,BreakArmed,BreakApplied,BreakCancelled };
+enum class ToolReason { None,InventoryBusy,PairingNotReady,AuthoritativeUnavailable,CountMismatch,
+    IntentionalRemoval,NoDepletion,NoMatchingSource,PolicyNoTransfer,TransferQueued,TransferDeferred,TransferOther };
+struct ToolEvidence {
+    ToolStage stage=ToolStage::Sample;
+    ToolReason reason=ToolReason::None;
+    ToolObservation before,after;
+    std::uint32_t operationRva{};
+    int invoker{},matchingSources=-1;
+    int mismatchSlot=-1,clientCount=-1,serverCount=-1;
+    bool captured{},identityChanged{},depletedByUse{},intentionalRemoval{},pending{},transferReady{};
+    std::uint64_t operations{},captures{},completedUses{},depletions{};
+    std::uint64_t operationSamplesOmitted{};
+    PairingEvidence pairing;
 };
 struct Diagnostic {
     DiagnosticKind kind=DiagnosticKind::Request;
@@ -57,6 +84,7 @@ struct Diagnostic {
     unsigned syncCoverage{};
     std::uint64_t resampleStartedAt{},syncApplications{};
     bool emptyFallback{};
+    ToolEvidence tool;
 };
 class DiagnosticQueue {
 public:

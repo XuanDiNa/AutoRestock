@@ -31,6 +31,9 @@ std::optional<TransferResult> Runtime::Tick(void* manager,bool foreground,bool h
     auto view=ResolveWorld(world_,base_,manager,player,foreground,hidden,Mode(),&failure);
     if(!view){Reset(ResetCause::TickWorldGate,now,failure);return {};}
     Sync(*view,epoch,now);
+    if(toolBreak_ && (now<toolBreak_->observedAt || now-toolBreak_->observedAt>500)){
+        TraceTool(ToolStage::BreakCancelled,ToolReason::None,now);toolBreak_.reset();
+    }
     if(Ordinary() && OrdinaryBlocked()){Reset();return {};}
     if(Ordinary() && resample_.Active() && (!resample_.Healthy(now) || resample_.Expired(now))){
         StopOrdinary(now,resample_.Expired(now)?4:3);policy_.Reset();uses_.Reset();return {};
@@ -57,13 +60,25 @@ std::optional<TransferResult> Runtime::Tick(void* manager,bool foreground,bool h
     // still in flight. Keep only its integer correlation as a fence until ACK
     // or timeout; do not overlap a new request with the abandoned old context.
     auto inventory=Ordinary()?ResolveOrdinaryInventory(native_,base_,manager,player):ResolveWorldInventory(native_,base_,manager,player);
-    if(!inventory) return {}; // no native reads/transfers while the engine owns an active operation
+    if(!inventory){GateTool(ToolStage::Gate,ToolReason::InventoryBusy,now);return {};}
+    SampleTool(*view,now); // idle inventory only, but before integrated admission
+    if(toolBreak_){
+        NativeUseStamp stamp;auto current=Main(*view,&stamp);
+        auto const& proof=toolBreak_->capture;
+        if(!current || (!current->Empty() && (current->count!=1 || current->identity!=proof.before.identity ||
+            !stamp.idKnown || stamp.variant!=proof.trace.beforeNative.variant || stamp.id!=proof.trace.beforeNative.id))){
+            TraceTool(ToolStage::BreakCancelled,ToolReason::None,now);toolBreak_.reset();
+        }
+    }
+    if(toolActive_ && integrated_)toolEvidence_.pairing=integrated_->Inspect(identity,now);
     if(Ordinary() && ordinaryNeedsResample_){
         resample_.Start(pendingDiagnostic_.source,view->selected,now,false);
         ordinaryNeedsResample_=false;
     }
     auto get=[&](int slot){return Ordinary()?native_.legacy.inventoryItem(inventory->inventory,slot):native_.getItem(inventory->wrapper,slot);};
-    if(integrated_ && !Pending() && !completion_ && !integrated_->Ready(identity,now))return {};
+    if(integrated_ && !Pending() && !completion_ && !integrated_->Ready(identity,now)){
+        GateTool(ToolStage::Gate,ToolReason::PairingNotReady,now);return {};
+    }
     auto progressObservation=[&](Snapshot const& sample){
         auto event=pendingDiagnostic_;
         auto src=get(event.source),dst=get(event.destination);
@@ -104,15 +119,39 @@ std::optional<TransferResult> Runtime::Tick(void* manager,bool foreground,bool h
         sample.transferReady=counts.has_value();
         if(counts)for(int slot=0;slot<36;++slot){
             if(slot!=view->selected && slot<9)continue;
-            if((*counts)[slot]!=sample.items[slot].count)sample.transferReady=false;
+            if((*counts)[slot]!=sample.items[slot].count){
+                sample.transferReady=false;
+                if(toolActive_ && toolEvidence_.mismatchSlot<0){
+                    toolEvidence_.mismatchSlot=slot;toolEvidence_.clientCount=sample.items[slot].count;
+                    toolEvidence_.serverCount=(*counts)[slot];
+                }
+            }
         }
         // Before policy/UseTracker consumes a depletion/threshold trigger, wait
         // for a copied post-handler server count sample matching these slots.
         // No request exists yet: waiting must not become a rejected attempt.
         // Existing in-flight requests still need reconciliation/timeout below.
-        if(!sample.transferReady && !Pending() && !completion_)return {};
+        if(!sample.transferReady && !Pending() && !completion_){
+            GateTool(ToolStage::Gate,counts?ToolReason::CountMismatch:ToolReason::AuthoritativeUnavailable,now);return {};
+        }
     }
+    ApplyToolBreak(sample.items[view->selected],now);
     uses_.Apply(context_,sample);
+    if(toolActive_){
+        toolEvidence_.transferReady=sample.transferReady;toolEvidence_.intentionalRemoval=sample.intentionalRemoval;
+        toolEvidence_.depletedByUse=sample.depletedByUse.has_value();toolEvidence_.matchingSources=-1;
+        auto const& current=sample.items[view->selected];
+        auto ref=sample.depletedByUse?&*sample.depletedByUse:!current.Empty()?&current:nullptr;
+        if(ref){
+            toolEvidence_.matchingSources=0;
+            for(int slot=9;slot<36;++slot){auto const& candidate=sample.items[slot];
+                if(candidate.Empty() || candidate.capacity!=ref->capacity || candidate.damageable!=ref->damageable)continue;
+                bool matches=ref->damageable?!ref->withoutDurability.empty() && ref->withoutDurability==candidate.withoutDurability:
+                    !ref->identity.empty() && ref->identity==candidate.identity;
+                if(matches)++toolEvidence_.matchingSources;
+            }
+        }
+    }
     if(Ordinary() && (!sample.items[view->selected].Empty() || sample.intentionalRemoval))emptyFallback_.reset();
     if(Ordinary() && sample.items[view->selected].Empty() && emptyFallback_ && !sample.intentionalRemoval)
         sample.emptyFallback=emptyFallback_;
@@ -190,6 +229,10 @@ std::optional<TransferResult> Runtime::Tick(void* manager,bool foreground,bool h
     }
     auto transfer=policy_.Tick(sample,config);completion_.reset();
     if(!transfer){
+        auto reason=sample.intentionalRemoval?ToolReason::IntentionalRemoval:
+            sample.items[view->selected].Empty() && !sample.depletedByUse?ToolReason::NoDepletion:
+            toolEvidence_.matchingSources==0?ToolReason::NoMatchingSource:ToolReason::PolicyNoTransfer;
+        GateTool(ToolStage::Policy,reason,now);
         if(Ordinary() && sample.emptyFallback && !Pending())emptyFallback_.reset();
         return {};
     }
@@ -221,6 +264,8 @@ std::optional<TransferResult> Runtime::Tick(void* manager,bool foreground,bool h
         policy_.Defer(transfer->requestId);completion_.reset();
     }
     else completion_=RequestCompletion{transfer->requestId,Completion::Rejected};
+    GateTool(ToolStage::Policy,result==TransferResult::Queued?ToolReason::TransferQueued:
+        result==TransferResult::Deferred?ToolReason::TransferDeferred:ToolReason::TransferOther,now);
     return result;
 }
 std::uint64_t Runtime::NativeWriterRequest(void* inventory,int slot,std::uint64_t epoch,std::uint64_t now) const noexcept{
@@ -291,6 +336,24 @@ std::optional<UseCapture> Runtime::BeginUse(void* inventory,void const* operatio
     RecentUse trace;trace.recorded=Ordinary() && ordinaryWatching_ && !abandoned_;
     trace.invoker=invoker;if(trace.recorded)trace.beginAt=GetTickCount64();
     auto before=Main(*view,trace.recorded?&trace.beforeNative:nullptr);if(!before || before->Empty()) return {};
+    if(toolActive_ && (before->damageable || before->capacity==1) && toolEvidence_.captures!=UINT64_MAX)++toolEvidence_.captures;
+    return UseCapture{context_,std::move(*before),epoch,useProgress_.RequestId(),trace,resample_.Revision()};
+}
+std::optional<UseCapture> Runtime::BeginDestroy(void* gameMode,bool foreground,bool hidden,Config config,std::uint64_t epoch){
+    if(faulted_ || !backendEnabled_ || !config.enabled || !native_.profile || native_.profile!=world_.profile)return {};
+    auto player=Read<void*>(gameMode,native_.profile->layout.gameModePlayer);
+    auto manager=Read<void*>(player,native_.profile->layout.managerPlayer);
+    auto view=ResolveWorld(world_,base_,manager,player,foreground,hidden,Mode());
+    if(!view)return {};
+    Sync(*view,epoch);
+    auto before=Main(*view);
+    if(!before || before->Empty() || !before->damageable || before->capacity!=1 || before->count!=1)return {};
+    toolActive_=true;
+    if(toolEvidence_.captures!=UINT64_MAX)++toolEvidence_.captures;
+    toolEvidence_.operationRva=native_.profile->Rva(0x259ABB0);toolEvidence_.invoker=9;toolEvidence_.captured=true;
+    RecentUse trace;trace.invoker=9;
+    trace.recorded=Ordinary() && ordinaryWatching_ && !abandoned_;
+    if(trace.recorded)trace.beginAt=GetTickCount64();
     return UseCapture{context_,std::move(*before),epoch,useProgress_.RequestId(),trace,resample_.Revision()};
 }
 void Runtime::EndUse(UseCapture const& capture,bool foreground,bool hidden,Config config,std::uint64_t epoch){
@@ -316,6 +379,81 @@ void Runtime::EndUse(UseCapture const& capture,bool foreground,bool hidden,Confi
     }
     uses_.Observe(capture.context,capture.before,context_,*after);
     useProgress_.Observe(capture.requestId,capture.before,*after,trace);
+    if(capture.before.damageable || capture.before.capacity==1){
+        toolActive_=true;
+        if(toolEvidence_.completedUses!=UINT64_MAX)++toolEvidence_.completedUses;
+        bool depleted=!capture.before.Empty() && after->Empty();
+        if(depleted && toolEvidence_.depletions!=UINT64_MAX)++toolEvidence_.depletions;
+        toolEvidence_.before={true,capture.before.Empty(),capture.before.damageable,capture.before.count,capture.before.capacity,{}};
+        toolEvidence_.after={true,after->Empty(),after->damageable,after->count,after->capacity,{}};
+        toolEvidence_.invoker=trace.invoker;toolEvidence_.identityChanged=capture.before.identity!=after->identity;
+        toolEvidence_.depletedByUse=depleted;
+        auto now=GetTickCount64();
+        if(depleted || !toolUseAt_ || now<toolUseAt_ || now-toolUseAt_>=2000){
+            TraceTool(ToolStage::Use,ToolReason::None,now);toolUseAt_=now;
+        }
+    }
+}
+std::optional<UseCapture> Runtime::BeginToolHurt(void const* stack,void* player,bool foreground,bool hidden,Config config,std::uint64_t epoch){
+    if(faulted_ || !backendEnabled_ || !config.enabled || Pending() || !stack ||
+        !native_.profile || native_.profile!=world_.profile)return {};
+    auto manager=Read<void*>(player,native_.profile->layout.managerPlayer);
+    auto view=ResolveWorld(world_,base_,manager,player,foreground,hidden,Mode());
+    if(!view)return {};
+    Sync(*view,epoch);
+    RecentUse trace;trace.invoker=10;
+    auto before=Main(*view,&trace.beforeNative);
+    auto incoming=NativeStamp(stack);
+    if(!before || before->Empty() || !before->damageable || before->capacity!=1 || before->count!=1 ||
+        !trace.beforeNative.idKnown || !trace.beforeNative.id || !incoming.idKnown ||
+        incoming.variant!=trace.beforeNative.variant || incoming.id!=trace.beforeNative.id ||
+        Read<std::uint8_t>(stack,34)!=1)return {};
+    // Native ID AND complete pre-damage identity must match the actual hand.
+    OwnedStack copy;if(!copy.Copy(native_.stack,stack))return {};
+    auto hand=world_.inventoryItem(view->inventory,view->selected);
+    if(!hand || !SameNativeItem(native_.stack,copy.Get(),hand))return {};
+    toolActive_=true;if(toolEvidence_.captures!=UINT64_MAX)++toolEvidence_.captures;
+    toolEvidence_.operationRva=native_.profile->Rva(0x2488FE0);toolEvidence_.invoker=10;toolEvidence_.captured=true;
+    return UseCapture{context_,std::move(*before),epoch,0,trace,0};
+}
+bool Runtime::EndToolHurt(UseCapture const& capture,void const* stack,bool foreground,bool hidden,Config config,std::uint64_t epoch){
+    if(faulted_ || !native_.profile || native_.profile!=world_.profile)return false;
+    if(!config.enabled || capture.epoch!=epoch){Reset(ResetCause::EndUseConfigChanged);return false;}
+    auto player=reinterpret_cast<void*>(capture.context.player);
+    auto manager=Read<void*>(player,native_.profile->layout.managerPlayer);
+    auto view=ResolveWorld(world_,base_,manager,player,foreground,hidden,Mode());
+    if(!view || context_!=capture.context || Key(*view)!=capture.context){Reset(ResetCause::EndUseContextChanged);return false;}
+    if(!stack || !native_.stack.empty(stack) || Read<std::uint8_t>(stack,34)!=0 || Pending())return false;
+    NativeUseStamp currentStamp;auto current=Main(*view,&currentStamp);
+    if(!current || (!current->Empty() && (current->count!=1 || current->identity!=capture.before.identity ||
+        !currentStamp.idKnown || currentStamp.variant!=capture.trace.beforeNative.variant || currentStamp.id!=capture.trace.beforeNative.id)))return false;
+    auto now=GetTickCount64();toolBreak_=ToolBreak{capture,now};
+    toolEvidence_.before={true,false,true,1,1,capture.trace.beforeNative};
+    toolEvidence_.after={true,true,false,0,0,{}};
+    TraceTool(ToolStage::BreakArmed,ToolReason::None,now);
+    return true;
+}
+void Runtime::ApplyToolBreak(Item const& current,std::uint64_t now){
+    if(!toolBreak_)return;
+    auto const& proof=toolBreak_->capture;
+    if(proof.context!=context_ || proof.epoch!=epoch_ || now<toolBreak_->observedAt || now-toolBreak_->observedAt>500){
+        TraceTool(ToolStage::BreakCancelled,ToolReason::None,now);toolBreak_.reset();return;
+    }
+    if(!current.Empty()){
+        if(current.count!=1 || current.identity!=proof.before.identity){
+            TraceTool(ToolStage::BreakCancelled,ToolReason::None,now);toolBreak_.reset();
+        }
+        return; // native owner has not applied its actual break yet
+    }
+    // Not an idle empty inference: the same-ID native working stack actually
+    // broke1->0. Tick independently proved actual empty hand AND existing
+    // integrated identity/count agreement before consuming this one-shot fact.
+    uses_.Observe(proof.context,proof.before,context_,current);
+    if(toolEvidence_.depletions!=UINT64_MAX)++toolEvidence_.depletions;
+    if(toolEvidence_.completedUses!=UINT64_MAX)++toolEvidence_.completedUses;
+    toolEvidence_.depletedByUse=true;
+    TraceTool(ToolStage::BreakApplied,ToolReason::None,now);
+    toolBreak_.reset();
 }
 std::optional<RequestCompletion> Runtime::Decode(void* manager,std::span<std::byte const> response) const noexcept{
     return faulted_ || integrated_ || Ordinary() ? std::nullopt : responses_.Decode(reinterpret_cast<std::uintptr_t>(manager),response);
@@ -338,6 +476,10 @@ void Runtime::Publish(RequestCompletion const& value) noexcept{
     ClearPending();abandoned_=false;
 }
 void Runtime::Reset(ResetCause cause,std::uint64_t now,WorldFailure failure) noexcept{
+    if(toolActive_)TraceTool(ToolStage::Reset,ToolReason::None,now?now:GetTickCount64(),cause,failure);
+    toolActive_=false;toolLast_={};toolEvidence_={};toolBreak_.reset();toolSampleAt_=toolGateAt_=toolUseAt_=0;
+    toolGateStage_=ToolStage::Reset;toolGateReason_=ToolReason::None;
+    toolOperations_={};toolOperationCount_=0;
     if(stoppedWritersActive_)FinishStoppedWriters(now?now:GetTickCount64(),2,cause,failure);
     // Only active-watch diagnostics need a timestamp; idle resets do not query
     // the clock. Never report the request's start as its cancellation time.
@@ -440,5 +582,60 @@ std::optional<Item> Runtime::Main(WorldView const& view,NativeUseStamp* stamp){
     if(stamp)*stamp=NativeStamp(stack.Get());
     bool damageable=!native_.stack.empty(stack.Get()) && world_.damageable(stack.Get());
     return identities_.Identify(native_.stack,stack.Get(),damageable);
+}
+void Runtime::TraceTool(ToolStage stage,ToolReason reason,std::uint64_t now,ResetCause cause,WorldFailure failure) noexcept{
+    Diagnostic event;event.kind=DiagnosticKind::ToolTrace;event.time=now;
+    event.integrated=integrated_!=nullptr;event.ordinary=Ordinary();
+    event.sourceCount=toolEvidence_.before.count;event.destinationCount=toolEvidence_.after.count;
+    event.destination=context_.selected;event.tool=toolEvidence_;event.tool.stage=stage;event.tool.reason=reason;
+    event.resetCause=cause;event.worldFailure=static_cast<int>(failure);
+    event.tool.pending=Pending();diagnostics_.Push(event);
+}
+void Runtime::GateTool(ToolStage stage,ToolReason reason,std::uint64_t now) noexcept{
+    if(!toolActive_)return;
+    if(stage!=toolGateStage_ || reason!=toolGateReason_ || now<toolGateAt_ || now-toolGateAt_>=2000){
+        TraceTool(stage,reason,now);toolGateStage_=stage;toolGateReason_=reason;toolGateAt_=now;
+    }
+}
+void Runtime::SampleTool(WorldView const& view,std::uint64_t now){
+    auto stack=world_.inventoryItem(view.inventory,view.selected);
+    ToolObservation current;
+    if(stack){
+        current.readable=true;current.empty=native_.stack.empty(stack);
+        current.count=Read<std::uint8_t>(stack,34);current.native=NativeStamp(stack);
+        if(!current.empty){current.capacity=native_.stack.capacity(stack);current.damageable=world_.damageable(stack);}
+    }
+    bool watch=current.readable && !current.empty && (current.damageable || current.capacity==1);
+    if(!toolActive_ && !watch)return;
+    toolEvidence_.before=toolLast_;toolEvidence_.after=current;
+    toolEvidence_.matchingSources=-1;toolEvidence_.transferReady=false;toolEvidence_.intentionalRemoval=false;
+    toolEvidence_.mismatchSlot=toolEvidence_.clientCount=toolEvidence_.serverCount=-1;
+    if(!toolActive_ || current!=toolLast_ || now<toolSampleAt_ || now-toolSampleAt_>=2000){
+        TraceTool(ToolStage::Sample,ToolReason::None,now);toolSampleAt_=now;
+    }
+    toolLast_=current;
+    toolActive_=watch || (toolActive_ && (!current.readable || current.empty));
+}
+void Runtime::ObserveToolOperation(void* inventory,void const* operation,bool captured,std::uint64_t now) noexcept{
+    if(!toolActive_ || !native_.profile || native_.profile!=world_.profile ||
+        reinterpret_cast<std::uintptr_t>(inventory)!=context_.inventory)return;
+    auto const& layout=native_.profile->layout;
+    std::uintptr_t entry{};
+    if(layout.operationAbi==OperationAbi::OwningFunction){
+        auto closure=Read<void*>(operation,layout.operationImplementation);
+        entry=Read<std::uintptr_t>(Read<void*>(closure,0),layout.implementationInvoker);
+    }else entry=Read<std::uintptr_t>(operation,0);
+    auto rva=entry>=base_ && entry-base_<native_.profile->imageExtent?static_cast<std::uint32_t>(entry-base_):0;
+    if(toolEvidence_.operations!=UINT64_MAX)++toolEvidence_.operations;
+    toolEvidence_.operationRva=rva;toolEvidence_.captured=captured;
+    int invoker{};UsePlayer(*native_.profile,base_,operation,&invoker);toolEvidence_.invoker=invoker;
+    auto key=(std::uint64_t(rva)<<1)|static_cast<unsigned>(captured);
+    for(unsigned n=0;n<toolOperationCount_;++n)if(toolOperations_[n]==key)return;
+    if(toolOperationCount_==toolOperations_.size()){
+        if(toolEvidence_.operationSamplesOmitted!=UINT64_MAX)++toolEvidence_.operationSamplesOmitted;
+        return;
+    }
+    toolOperations_[toolOperationCount_++]=key;
+    TraceTool(ToolStage::Operation,ToolReason::None,now);
 }
 }

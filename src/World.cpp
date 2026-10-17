@@ -80,7 +80,7 @@ std::optional<WorldView> ResolveWorld(WorldApi const& api,std::uintptr_t base,vo
     return view;
 }
 char const* UseInvokerName(int invoker) noexcept{
-    constexpr char const* names[]={"unknown","use","use-on","destroy","attack","interact","interaction","direct-player","delayed-use"};
+    constexpr char const* names[]={"unknown","use","use-on","destroy","attack","interact","interaction","direct-player","delayed-use","world-destroy","tool-hurt"};
     return invoker>=0 && invoker<static_cast<int>(std::size(names))?names[invoker]:names[0];
 }
 void* UsePlayer(NativeProfile const& profile,std::uintptr_t base,void const* operation,int* invoker) noexcept{

@@ -1,63 +1,45 @@
-# AutoRestock 0.3.0
+# AutoRestock
 
-[English documentation](README.en.md) · [下載 / Downloads](https://github.com/XuanDiNa/AutoRestock/releases/tag/v0.3.0)
+[English](#english) · [繁體中文](#繁體中文)
 
-Minecraft Bedrock Windows x64 **1.26.45.01、1.26.51.01、1.26.52.03** 原生客戶端 DLL，單一 DLL 自動選版。
-參考 [Tweakeroo Hand Restock](https://github.com/maruohon/tweakeroo)，不載入 Java 模組。
+## English
 
-這是沿用使用者已驗收 DLL 的 **0.3.0 正式交付包**，不是重新編譯的新版。
-使用者已回報：**26.45、26.51 都可以正常使用，26.52 也正常使用**。
-不加入背景背包、不依服務端品牌切換；這項驗收不代表所有服務端或所有恢復分支均已實測。
+Automatic main-hand restocking for Minecraft Bedrock. Keep building when your stack runs low, and replace a broken tool with a matching spare from your inventory.
 
-## 交付版本與建置識別
+A client-side native DLL loaded through LeviLauncher. No behavior pack, server plugin, or companion protocol is required.
 
-- 套件／manifest／mod 版本：`0.3.0`。
-- DLL 內部建置及日誌識別：`0.3.0-test3`，與三版本已驗收 DLL 相同。
-- DLL SHA256：`C2073234D4611FF6241340A1117B33815268D45C00C7075049B39D93E8C8FE6A`。
+[Download 0.3.1](https://github.com/XuanDiNa/AutoRestock/releases/tag/v0.3.1) · [Report an issue](https://github.com/XuanDiNa/AutoRestock/issues)
 
-本輪只更新交付 metadata 與文件，沒有重新編譯、重新連結或修補 DLL，也沒有改動補貨邏輯。
-日誌裡原有的 `test3`、`candidate`、`manual gameplay validation pending` 或未驗收說明保留為原建置文字；不表示載錯套件。
-本版驗收狀態以本文件的「人工驗收紀錄與適用範圍」為準；原生日誌仍不偽造伺服器確認。
+### Features
 
-## 三版本相容
+- **Automatic refill:** move matching items into the main hand when the remaining stack falls below your configured threshold.
+- **Broken-tool replacement:** equip a matching spare after a tool breaks. The spare keeps its own remaining durability; tools are not repaired.
+- **Main inventory only:** use the 27 main-inventory slots as reserves. Other hotbar slots and the offhand are left alone.
+- **Item-data matching:** check names, enchantments, tags, and components. Tool durability is ignored only when comparing copies to find a spare.
+- **Simple settings:** enable or disable restocking and choose the stack threshold in JSON, with automatic reload and no hotkey.
 
-每個精確版本均有獨立 PE 身分、磁碟 .text SHA256、96 個原生映射鍵與65處載入位元組保護。
-未知或不符映像拒絕啟用，不會退用26.52的位址。各版ABI差異沿用test3已核實的適配。
-載入後 ImageBase 只接受原始首選基址或該模組實際基址；磁碟首選基址與雜湊仍須完全相符。
-這保留了test3修正26.45啟動拒絕的行為，不是取消版本或位元組保護。
+Refilling needs a suitable reserve and an eligible gameplay context. It does not create items or guarantee uninterrupted use at an empty stack.
 
-## 真正耗盡後的空手保底
+### Requirements
 
-- 原生世界使用回呼確實觀察到非工具物品由有到無，才保留其完整物品身分。
-  這是補貨意圖，不是伺服器接受或舊請求消耗帳的證據。
-- 後來再收到同一主手的空格同步，不必然丟掉這份耗盡記錄。
-  原發送間隔、完整主手＋27 格來源副本、不同 Tick 核對及原生交易檢查仍須通過。
-- 只從 9–35 格找完整資料相同的物品，按現在數量建立新計畫；不取其他快捷格或副手。
-- 原生搬運提交就用掉保底意圖；找不到相同來源也清掉，不等之後撿到東西再自行搬走。
-  原生忙碌而尚未提交時保留意圖，不清佇列或強制送出。
-- 開介面、失焦、切格、改設定、世界／玩家／背包生命週期變動，均清掉保底記錄。
-  主手重新有物品、手動清空、不同物品資料或跨同步的過期使用回呼，不沿用舊記錄猜種類。
+- Windows x64
+- Minecraft **1.26.45.01 / 1.26.51.01 / 1.26.52.03**
+- LeviLauncher with native DLL plugin support and the Microsoft Visual C++ x64 runtime
 
-## 同連線自動恢復
+One DLL supports these three exact game versions. Other builds are not supported; the plugin stays inactive if its version checks fail.
 
-舊版 ordinary 同步／追蹤差異、恢復時取消或 10 秒恢復到期，會鎖到重連。
-本版放棄當次本地計畫，暫停至少 1500ms，再在同一仍獲准連線重新讀取主手及主背包。
-兩個不同 Tick 的完整副本必須一致，主手變動只能由確實觀察到的連續使用解釋，才按現況規劃。
+### Installation
 
-這條自動恢復路線**有意不再要求舊請求兩格覆蓋或最新同步後的新消耗**；
-空手仍必須有上述真正耗盡的身分記錄。原入站路線保留兩格覆蓋，但允許空手保底取代再次消耗要求。
-原補貨提交間隔仍至少 1500ms；暫停不能縮短它。10 秒只取消當次恢復，再等新的本地規劃，
-不把時間到、靜默、兩格更新或兩次本地副本當成 ACK。新計畫可能選到相同來源／數量，
-但不是重播舊 Transfer 或手動重送封包。晚到伺服器更新照常套用，可能干擾新計畫；
-本輪驗收不外推到尚未覆蓋的網路條件。
+1. Fully close Minecraft. If upgrading, back up the old plugin **outside the mods directory**.
+2. Download the plugin ZIP from [Releases](https://github.com/XuanDiNa/AutoRestock/releases). The automatic source-code archives are not installable packages.
+3. Create `mods/AutoRestock/` in the selected game version's directory and extract the ZIP's seven files into it.
+4. When upgrading, keep your existing `config.json`, logs, and disabled `.close` filenames. Use the bundled default config only for a first installation.
 
-**不是移除所有安全檢查。** 版本／映像／位元組、執行緒、會話資格、玩家／世界／背包有效性、
-目前主手、完整物品比較、原生交易互斥及提交前核對不變。版本不符、hook 衝突、原生不變量或
-會話／執行緒故障仍拒絕，此類致命故障不自動解除。不保證耗盡時無縫連放。
+Do not replace DLLs while Minecraft is running or load old and new copies together. To roll back, close the game and restore the old DLL and metadata from your backup. This plugin cannot be imported as a `.mcpack`.
 
-## JSON
+### Configuration
 
-交付包預設設定；升級保留原檔，按需要手動調整門檻：
+Edit `config.json` beside the DLL:
 
 ```json
 {
@@ -66,94 +48,80 @@ Minecraft Bedrock Windows x64 **1.26.45.01、1.26.51.01、1.26.52.03** 原生客
 }
 ```
 
-語義仍是「嚴格小於」：**17 表示剩餘 ≤16 嘗試補貨**，16 是剩 ≤15。範圍 1–64，受原生上限限制。
-省略欄位仍保留舊解析預設 6；包內明確指定 17，不覆寫使用者 JSON。沒有新增設定欄位。
-只補主手，來源主背包 27 格；沒有熱鍵、聊天或畫面提示。約 500ms 重讀，錯誤格式／型別／
-範圍、重複／未知欄位或檔案缺失保留前份有效設定，不寫回檔案。
-命名、附魔、標籤、元件等完整資料仍比較；工具替補原規則不變。
+`enabled` toggles restocking. `preRestockThreshold` accepts 1–64 and uses a strict "less than" comparison: **17 means refill at 16 items or fewer**. This is a stack-count threshold, not a tool-durability threshold.
 
-## 日誌與安全邊界
+Settings reload automatically, usually within 500 ms. Invalid edits keep the last valid settings. See the [default config](config.json) and [setting descriptions](config.schema.json). Release downloads include archive and per-file SHA-256 checksums.
 
-- `Request ... emptyFallback=1`：新的原生搬運使用空手保底，不表示遠端接受。
-- `PredictionPaused`、`ResampleBaseline`、`ResampleReady`：本地規劃進度。
-- `PredictionStopped ... reconnectRequired=0 automaticRecovery=1`：當次取消並暫停，不是永久停用。
-- `PredictionRearmed ... freshSnapshotRequired=1`：可重新取樣，尚未授權搬運或證明成功。
-- `Session backend=remote-ordinary-replan-quarantine`：等待本地恢復間隔。
-- `serverConfirmed=0`、`oldRequestCompleted=0 oldRequestReplayed=0` 保留，不捏造 ACK。
+### Notes and feedback
 
-沿用 actual Inventory 兩個原生 setter，由遊戲自動送普通交易。不建背景 UI、modern wrapper 或
-legacy scope，不改借用物品／網路 ID，不手動第二次發送，不回滾、清佇列、壓掉更新或改 EXE。
-每版21個既有hook、65處載入保護；本次封裝無新原生位址／綁定，沿用test3的IDA核實版本表。
-單人及 modern 遠端仍要求原生接受結果與精確庫存核對，不套用 ordinary 的放寬恢復。
-英文日誌格式化／寫檔仍在背景執行緒；遊戲回呼只傳有界的複製資料。
+**0.3.1 is a stable release.** Basic restocking and broken-tool replacement have been manually tested in single-player on all three supported versions. Multiplayer tool replacement, unusual item data, every server implementation, and long-duration edge cases still need broader testing. Follow your server's rules when using client plugins.
 
-## 手動安裝與回復
+The release keeps the exact tested DLL, so its internal build/log identifier remains `0.3.1-test4`. Existing users of that build do not need to replace the DLL for this release.
 
-1. 完全退出 Minecraft，備份 `mods/AutoRestock/` 的 DLL、metadata、設定與日誌。
-2. ZIP 共 7 檔，更新 DLL 與 metadata／文件，**保留原有 config.json 及 AutoRestock.log**。
-   原本用 `manifest.json.close` 停用者保留停用檔名及其他 `.close` 狀態。
-3. 編輯保留的 JSON，設 enabled 為 true、preRestockThreshold 為 17。不要在補貨中改設定。
-4. `manifest.json`／`mod.json` 應顯示 `0.3.0`；DLL 日誌仍為 `0.3.0-test3`。
-   正常啟動時可核對 `Selected profile` 的精確版本、`Ready: 0.3.0-test3` 及連線資格。
+Feedback and issue reports are welcome! Include your exact game version, single-player or server environment, item and reserve details, steps to reproduce, and a relevant excerpt from `AutoRestock.log`. Remove personal information before sharing logs.
 
-目前已安裝並正常使用 test3 者，**不必為這次封裝重新安裝 DLL 或重測**；兩份 DLL 位元組完全相同。
-只有需要以正式版本資料整理安裝目錄時，才在退出遊戲並備份後更新 metadata／文件。
-不要把 ZIP 的預設設定直接覆蓋到已自訂的 JSON，也不要清除日誌。
+Technical details: [verification and test coverage](https://github.com/XuanDiNa/AutoRestock/blob/main/docs/verification.md) · [release notes](https://github.com/XuanDiNa/AutoRestock/blob/main/docs/release-v0.3.1.md). Build and verification tools: [xmake](https://github.com/XuanDiNa/AutoRestock/blob/main/xmake.lua) · [verifier](https://github.com/XuanDiNa/AutoRestock/blob/main/tools/verify_release.ps1).
 
-只交付套件，未自動安裝，未改已安裝 DLL／設定／日誌／EXE，未啟停、附加或操作 Minecraft。
-回復時退出遊戲，換回備份 DLL 與 metadata，保留日誌，按需要恢復原門檻。
+Inspired by [Tweakeroo Hand Restock](https://github.com/maruohon/tweakeroo). This is an independent Bedrock adaptation, not an official port. See [third-party notices](THIRD_PARTY_NOTICES.txt). No project source license has been granted; public availability alone does not grant a license.
 
-## 人工驗收紀錄與適用範圍
+## 繁體中文
 
-2026-10-17，使用者先回報「已測試完成 26.45和26.51 都可以正常使用」，
-再回報「26.52 正常使用」。三版已安裝DLL均與本包DLL雜湊相同；日誌也各自正確選版並進入Ready。
-本包記錄的是三個精確版本在使用者實測環境的正常使用驗收，不要求為純封裝再測一次。
+為 Minecraft 基岩版自動補充主手物品。方塊快用完時從背包補上，工具損壞後也能換入同類備品。
 
-Ready、deferred／queued請求、重新取樣或兩格更新，只是本地流程記錄，不是伺服器ACK。
-正常使用的結論來自上述人工回報，不把日誌單獨當作遠端數量守恆證明。
-未明確回報的重連持久性、物品總量核對、多輪耐久、所有恢復分支和服務端品牌，不擅自列為已通過。
-本次不把舊0.2.0的驗收或早期失敗候選混充為test3的實測證據。
+透過 LeviLauncher 載入的客戶端原生 DLL 插件，不需要行為包、伺服器插件或配套協定。
 
-適用於指定遊戲版本、允許此類客戶端的環境。沒有辨認或保證所有服務端品牌；
-BDS 未納入本輪目標，其他伺服器、網路延遲、反作弊及長時間效能不由本次結果一併保證。
-保留版本、物品資料、原生交易、執行緒與會話檢查；不再為本次交付放寬保護。
+[下載 0.3.1](https://github.com/XuanDiNa/AutoRestock/releases/tag/v0.3.1) · [回報問題](https://github.com/XuanDiNa/AutoRestock/issues)
 
-## 驗證與封裝
+### 主要功能
 
-test3 的既有離線報告記錄了 **115 次測試執行**，包含Debug／Release建置、Runtime／Policy／Transaction、
-三版本21-hook實驗、65處保護、六份原始／載入器映像、原生葉函式及不支援程序拒絕。
-包含原始／實際載入基址兩種形式、篡改與不可讀頁拒絕，以及既有單人／modern／ordinary恢復回歸。
-其中Python測試入口內含8項測試。這些是原建置既有證據，不是本次封裝重新跑過的測試，也不代替人工驗收。
+- **自動補貨**：主手物品低於設定數量時，從背包補入資料相同的物品。
+- **工具替換**：工具損壞後，換入同類備品。備品保留自己的剩餘耐久，不會修復工具。
+- **只取主背包**：使用主背包 27 格作為來源，不取其他快捷格，也不補副手。
+- **比對物品資料**：檢查名稱、附魔、標籤與元件；尋找工具備品時，只在比較用副本上忽略耐久差異。
+- **簡單設定**：透過 JSON 開關補貨、調整數量門檻，設定自動重新載入，不設熱鍵。
 
-本次另外核對已驗收 DLL 來源／SHA256、AMD64／匯出／依賴、metadata／JSON schema、
-白名單 7 檔及 ZIP 逐檔雜湊，並核對舊釋出、原始碼／測試、已安裝非日誌檔案與遊戲映像保留。
-正式交付使用凍結的test3 DLL，不執行會強制重建的候選版驗證器。
-來源工作區保留 `releases/verification-0.3.0.json`、原test3報告與ZIP旁的SHA256校驗檔。
+背包中必須有合適的備品，且目前遊戲狀態允許補貨。插件不會產生物品，也不保證耗盡時完全無縫銜接。
 
-這一段的「本次」指已完成的原始正式封裝；私人驗證報告不隨公開倉庫上傳。
-公開原始碼的獨立建置與測試範圍見 [verification.md](docs/verification.md)。
+### 環境需求
 
-ZIP 僅有 DLL、manifest、mod、config、schema、README、第三方聲明共 7 檔，
-不含遊戲二進位、IDA 資料庫、反編譯資料、私人路徑、研究檔案、驗證報告或日誌。
+- Windows x64
+- Minecraft **1.26.45.01／1.26.51.01／1.26.52.03**
+- 支援原生 DLL 插件的 LeviLauncher，以及 Microsoft Visual C++ x64 執行階段
 
-## 公開原始碼建置
+同一個 DLL 支援上述三個精確版本，不適用於其他小版本；版本校驗不符時，插件不會啟用。
 
-需要 Windows x64、Visual Studio 2022 C++ 工具鏈／Windows SDK、xmake 與 PowerShell 7。
-JSON 3.11.3 標頭附於 `vendor/json/`，xmake 取得 MinHook 1.3.4；第三方授權見
-`THIRD_PARTY_NOTICES.txt`。未另行指定本專案原始碼授權；公開不等於授予開源授權。
+### 安裝方式
 
-```powershell
-xmake f -m release -y
-xmake build -y
-pwsh -File tools/verify_release.ps1
+1. 完整退出 Minecraft。升級前，先將舊插件備份到 **mods 目錄外面**。
+2. 從 [Releases](https://github.com/XuanDiNa/AutoRestock/releases) 下載插件 ZIP，不要下載自動產生的 Source code 壓縮檔。
+3. 在對應遊戲版本的目錄建立 `mods/AutoRestock/`，將 ZIP 內的七個檔案解壓縮到該資料夾。
+4. 升級時保留原有的 `config.json`、日誌與 `.close` 停用檔名；首次安裝才使用包內預設設定。
+
+不要在遊戲執行中替換 DLL，也不要同時載入新舊插件。需要回退時，退出遊戲後還原備份的舊 DLL 與版本描述檔。本插件不能當作 `.mcpack` 匯入。
+
+### 設定
+
+編輯 DLL 同目錄的 `config.json`：
+
+```json
+{
+  "enabled": true,
+  "preRestockThreshold": 17
+}
 ```
 
-驗證器會建置並執行 Debug／Release 的離線測試，不啟動或附加 Minecraft，也不安裝、
-重新封裝或替換正式 DLL。可另外傳入六份合法自備的原始／載入器遊戲映像作唯讀檢查；
-不提供或上傳遊戲映像。詳見 [驗證說明](docs/verification.md)。
+`enabled` 控制補貨開關；`preRestockThreshold` 可設為 1–64，採用「嚴格小於」判定：**17 表示剩餘 16 個或更少時補貨**。這是物品數量門檻，不是工具耐久門檻。
 
-自行編譯的 DLL 不是 Release 中已人工驗收的同一二進位；請勿只因測試通過就視為已實測。
-公開下載仍保留原封裝與原 SHA256；中英文件及中英 Release 說明在倉庫提供。
+設定通常在 500ms 內自動重新載入；格式錯誤時保留上一份有效設定。可參考[預設設定](config.json)與[設定欄位說明](config.schema.json)。Release 附有 ZIP 及包內各檔案的 SHA-256 校驗值。
 
-問題回報請包含精確遊戲版本、單人／伺服器環境、重現步驟及經刪除私人資訊的少量相關日誌。
-不要上傳遊戲 EXE、完整日誌、帳號憑證或私人分析資料。
+### 注意事項與回饋
+
+**0.3.1 為正式版。** 三個支援版本均已在單人世界人工測試基本補貨與工具損壞替換。伺服器上的工具替換、特殊物品資料、所有服務端組合及長時間邊界情境，仍需要更完整的測試。使用客戶端插件時，請遵守伺服器規則。
+
+正式版保留實測通過的原 DLL，因此內部建置與日誌仍顯示 `0.3.1-test4`。已正常使用這份 test4 的使用者，不必為本次正式發佈重換 DLL。
+
+歡迎回報問題或提出建議！請附上精確遊戲版本、單人或伺服器環境、物品與備品資料、重現步驟，以及 `AutoRestock.log` 的相關片段。公開日誌前，請先移除個人資訊。
+
+技術文件：[驗證與測試範圍](https://github.com/XuanDiNa/AutoRestock/blob/main/docs/verification.md) · [版本說明](https://github.com/XuanDiNa/AutoRestock/blob/main/docs/release-v0.3.1.md)。建置與驗證工具：[xmake](https://github.com/XuanDiNa/AutoRestock/blob/main/xmake.lua) · [驗證腳本](https://github.com/XuanDiNa/AutoRestock/blob/main/tools/verify_release.ps1)。
+
+本專案參考 [Tweakeroo Hand Restock](https://github.com/maruohon/tweakeroo)，是獨立的基岩版適配實作，並非官方移植。第三方授權見[相關聲明](THIRD_PARTY_NOTICES.txt)。本專案未另行授予原始碼授權；公開可見不等於取得使用授權。

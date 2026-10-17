@@ -181,11 +181,11 @@ int main(int argc,char** argv){try{
         }
         CHECK(InstallHooks());CHECK(MH_DisableHook(MH_ALL_HOOKS)==MH_OK);
         for(auto const& guard:worldApi.profile->guards)CHECK(std::memcmp(calls.image+guard.rva,guard.bytes.data(),32)==0);
-        for(auto rva:{0x25B1D10,0x25B23F0,0x26AFFB0,0x1D5170,0x8B2D490,0x266C180,0x268F860,0x266FAD0,
+        for(auto rva:{0x25B1D10,0x25B23F0,0x26AFFB0,0x259ABB0,0x2488FE0,0x1D5170,0x8B2D490,0x266C180,0x268F860,0x266FAD0,
             0x16CA370,0x16AF460,0xD92690,0x132E2B0,0x16AADF0,0x25AA010,0x1332440,0x1308CE0,
             0x1725AE0,0x132D2A0,0x25B4490,0x16A9B90,0x16AE270})
             CHECK(MH_RemoveHook(calls.image+FixtureRva(rva))==MH_OK);
-        std::cout<<"PASS actual 21-hook MinHook install/disable/restore on exact guarded original entries; no game code executed\n";return 0;
+        std::cout<<"PASS actual 23-hook MinHook install/disable/restore on exact guarded original entries; no game code executed\n";return 0;
     }
     Game game;fixture=&game;
     if(argc>1 && std::string(argv[1])=="--state-one")Put(game.connection.data(),176,std::uint32_t{1});

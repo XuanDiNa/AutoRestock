@@ -66,8 +66,16 @@ int wmain(int argc,wchar_t** argv) {
                 if(sections[n].SizeOfRawData && sections[n].PointerToRawData+sections[n].SizeOfRawData<=image.size)
                     std::memcpy(loaded+sections[n].VirtualAddress,image.data+sections[n].PointerToRawData,sections[n].SizeOfRawData);
             auto native=FindNativeProfile(expected[i-1]);CHECK(native);
+            // The native world-destroy hook must resolve through each exact
+            // image's independent IDA function, never52's numerical address.
+            auto destroy=expected[i-1]==GameVersion::V45?0x2D2DED0u:
+                expected[i-1]==GameVersion::V51?0x259AE10u:0x259ABB0u;
+            CHECK(native->Rva(0x259ABB0)==destroy);
+            auto hurt=expected[i-1]==GameVersion::V45?0x22DD0D0u:
+                expected[i-1]==GameVersion::V51?0x2489240u:0x2488FE0u;
+            CHECK(native->Rva(0x2488FE0)==hurt);
             CHECK(InspectLoadedNativeProfile(reinterpret_cast<HMODULE>(loaded))==native);
-            CHECK(native->addresses.size()==96 && native->guards.size()==65);
+            CHECK(native->addresses.size()==98 && native->guards.size()==67);
             auto loadedNt=reinterpret_cast<IMAGE_NT_HEADERS64*>(loaded+dos->e_lfanew);
             auto preferredBase=loadedNt->OptionalHeader.ImageBase;
             auto actualBase=reinterpret_cast<std::uintptr_t>(loaded);
@@ -151,7 +159,7 @@ int wmain(int argc,wchar_t** argv) {
         CHECK(!autorestock::ValidateModule(GetModuleHandleW(nullptr),error));
         CHECK(!autorestock::ValidateModule(nullptr,error));
         CHECK(error.find("stage=null-module")!=std::string::npos);
-        std::cout << "PASS: all six exact images with original/actual loaded base; all65 guards in both forms; arbitrary base and altered disk base refused; PE and unreadable-page diagnostics; unsupported host refused\n";
+        std::cout << "PASS: all six exact images with original/actual loaded base; all67 guards in both forms; arbitrary base and altered disk base refused; PE and unreadable-page diagnostics; unsupported host refused\n";
         return 0;
     }catch(std::exception const& error){std::cerr << error.what() << '\n';return 1;}
 }

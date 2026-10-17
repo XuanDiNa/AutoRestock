@@ -22,6 +22,14 @@ private:
     std::array<std::atomic<std::uint64_t>,N> data_{};
 };
 struct ServerTicket {std::uint64_t token{},policyId{};std::int32_t nativeId{};};
+// Observation only. No identifiers, native addresses or authority are exposed.
+struct PairingEvidence {
+    bool localValid{};int localRole{};
+    bool localStored{},localMatches{},localFresh{},serverSeen{},serverFresh{};
+    bool registryDistinct{},uniqueMatches{},runtimeMatches{},epochMatches{};
+    bool countsPresent{},countsFresh{},countsMatch{};
+    bool candidateRegistryDistinct{},candidateUniqueMatches{},candidateRuntimeMatches{};
+};
 using InventoryCounts=std::array<std::uint8_t,36>;
 // Calling-thread-only, read-only original Inventory layout. No native calls,
 // borrowed pointers or game-owned stack objects leave this function.
@@ -31,6 +39,7 @@ public:
     void Local(ActorIdentity const&,std::uint64_t now) noexcept;
     void Invalidate() noexcept;
     bool Ready(ActorIdentity const&,std::uint64_t now) const noexcept;
+    PairingEvidence Inspect(ActorIdentity const&,std::uint64_t now) const noexcept;
     bool Arm(ActorIdentity const&,std::uint64_t now,std::int32_t nativeId,std::uint64_t policyId) noexcept;
     // Begin/finish surround the ORIGINAL packet handler; only copied values cross threads.
     ServerTicket BeginServer(ActorIdentity const&,std::int32_t nativeId,std::uint64_t now) const noexcept;

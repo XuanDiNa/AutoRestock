@@ -133,7 +133,7 @@ NativeProfile const* InspectLoaded(HMODULE module,LoadedInspection& d) noexcept 
         if(!image)return nullptr;
         d.image=image;d.stage="native-catalog";
         auto native=FindNativeProfile(image->version);
-        if(!native || native->addresses.size()!=96 || native->guards.size()!=65)return nullptr;
+        if(!native || native->addresses.size()!=98 || native->guards.size()!=67)return nullptr;
         std::uint32_t last{};
         for(auto const& address:native->addresses){
             if(address.reference<=last || !address.target || address.target>=nt->OptionalHeader.SizeOfImage)return nullptr;

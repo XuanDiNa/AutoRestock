@@ -45,7 +45,8 @@ private:
 };
 
 // Excludes counts and network IDs. Requires exact aux/block plus symmetric
-// native full comparisons to close native wildcard/asymmetric cases.
+// native full comparisons to close native wildcard/asymmetric cases. Capacity1
+// uses exact Item target/full equality, not native canMerge (always false).
 bool SameNativeItem(StackApi const& api, void const* a, void const* b);
 // The caller must establish native damageability before choosing this path.
 // Normalization is on two full owned clones only; live stacks stay untouched.

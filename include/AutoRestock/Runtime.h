@@ -15,7 +15,17 @@ public:
         native_(native),world_(world),base_(imageBase),integrated_(&integrated),bridge_(&integrated){}
     std::optional<TransferResult> Tick(void* manager,bool foreground,bool hidden,Config,std::uint64_t now,std::uint64_t epoch);
     std::optional<UseCapture> BeginUse(void* inventory,void const* operation,bool foreground,bool hidden,Config,std::uint64_t epoch);
+    // Called only around the exact-profile GameMode::destroyBlock original.
+    // Tool-only: no threshold refill and no inference from an idle empty hand.
+    std::optional<UseCapture> BeginDestroy(void* gameMode,bool foreground,bool hidden,Config,std::uint64_t epoch);
+    // Native hurtAndBreak may operate on an exact-ID working copy. Only an
+    // observed1->0 break can arm a short, same-context hand-application wait.
+    std::optional<UseCapture> BeginToolHurt(void const* stack,void* player,bool foreground,bool hidden,Config,std::uint64_t epoch);
+    bool EndToolHurt(UseCapture const&,void const* stack,bool foreground,bool hidden,Config,std::uint64_t epoch);
     void EndUse(UseCapture const&,bool foreground,bool hidden,Config,std::uint64_t epoch);
+    // Owner-thread hook telemetry only; unknown callbacks cannot create use
+    // proof. Reads only the existing version-profiled operation representation.
+    void ObserveToolOperation(void* inventory,void const* operation,bool captured,std::uint64_t now) noexcept;
     // Owner-thread native writer observation. Exact incoming provenance may
     // retire prediction and PAUSE; it cannot accept, send or repair old proof.
     std::uint64_t NativeWriterRequest(void* inventory,int slot,std::uint64_t epoch,std::uint64_t now=0) const noexcept;
@@ -47,6 +57,21 @@ private:
     void PauseOrdinary(NativeWrite const&) noexcept;
     void FinishStoppedWriters(std::uint64_t now,int reason,ResetCause=ResetCause::Explicit,WorldFailure=WorldFailure::None) noexcept;
     std::optional<Item> Main(WorldView const&,NativeUseStamp* stamp=nullptr);
+    void SampleTool(WorldView const&,std::uint64_t now);
+    void TraceTool(ToolStage,ToolReason,std::uint64_t now,ResetCause=ResetCause::Explicit,WorldFailure=WorldFailure::None) noexcept;
+    void GateTool(ToolStage,ToolReason,std::uint64_t now) noexcept;
+    void ApplyToolBreak(Item const& current,std::uint64_t now);
+    struct ToolBreak {UseCapture capture;std::uint64_t observedAt{};};
+    std::optional<ToolBreak> toolBreak_;
+    ToolObservation toolLast_{};
+    ToolEvidence toolEvidence_{};
+    bool toolActive_{};
+    std::uint64_t toolSampleAt_{};
+    ToolStage toolGateStage_=ToolStage::Reset;
+    ToolReason toolGateReason_=ToolReason::None;
+    std::uint64_t toolGateAt_{},toolUseAt_{};
+    std::array<std::uint64_t,8> toolOperations_{};
+    unsigned toolOperationCount_{};
     NativeApi native_;WorldApi world_;std::uintptr_t base_;
     IntegratedBridge* integrated_{};
     IntegratedBridge* bridge_{};

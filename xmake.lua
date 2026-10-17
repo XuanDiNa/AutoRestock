@@ -5,6 +5,25 @@ set_allowedarchs("x64")
 set_targetdir("build/$(plat)/$(arch)/$(mode)")
 add_requires("minhook 1.3.4", {configs = {shared = false}})
 
+for _, name in ipairs({"ToolHurt", "WorldDestroy", "ToolHookDiagnostic"}) do
+    target("AutoRestock" .. name .. "Tests")
+        set_kind("binary")
+        add_files("tests/" .. name .. "Tests.cpp", "src/ConfigReload.cpp", "src/Config.cpp", "src/Runtime.cpp", "src/NativeIdentity.cpp", "src/NativeStack.cpp", "src/UseTracker.cpp", "src/Policy.cpp", "src/Transaction.cpp", "src/Native.cpp", "src/World.cpp", "src/Profile.cpp", "src/NativeProfile.cpp", "src/ResponseTracker.cpp", "src/Integrated.cpp", "src/NativeSession.cpp")
+        add_includedirs("include", "vendor/json")
+        add_packages("minhook")
+        add_syslinks("bcrypt", "user32")
+        add_cxflags("/utf-8", "/W4", "/EHsc")
+    target_end()
+end
+
+target("AutoRestockToolDiagnosticTests")
+    set_kind("binary")
+    add_files("tests/ToolDiagnosticTests.cpp", "src/Runtime.cpp", "src/NativeIdentity.cpp", "src/NativeStack.cpp", "src/UseTracker.cpp", "src/Policy.cpp", "src/Transaction.cpp", "src/Native.cpp", "src/World.cpp", "src/Profile.cpp", "src/NativeProfile.cpp", "src/ResponseTracker.cpp", "src/Integrated.cpp")
+    add_includedirs("include")
+    add_syslinks("bcrypt")
+    add_cxflags("/utf-8", "/W4")
+target_end()
+
 target("AutoRestockCompatibilityBehaviorTests")
     set_kind("binary")
     add_files("tests/CompatibilityBehaviorTests.cpp", "src/Runtime.cpp", "src/NativeIdentity.cpp", "src/NativeStack.cpp", "src/UseTracker.cpp", "src/Policy.cpp", "src/Transaction.cpp", "src/Native.cpp", "src/World.cpp", "src/Profile.cpp", "src/NativeProfile.cpp", "src/ResponseTracker.cpp", "src/Integrated.cpp")

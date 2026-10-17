@@ -24,7 +24,9 @@ $plainTests = @(
     'AutoRestockSessionTests','AutoRestockNativeSessionTests','AutoRestockRemoteSessionTests',
     'AutoRestockRemoteHookTests','AutoRestockPluginRuntimeTests','AutoRestockOrdinaryTests',
     'AutoRestockOrdinaryStabilityTests','AutoRestockOrdinaryRecoveryTests',
-    'AutoRestockCompatibilityBehaviorTests','AutoRestockVersionIsolationTests'
+    'AutoRestockCompatibilityBehaviorTests','AutoRestockVersionIsolationTests',
+    'AutoRestockToolDiagnosticTests','AutoRestockToolHookDiagnosticTests',
+    'AutoRestockWorldDestroyTests','AutoRestockToolHurtTests'
 )
 function Run-Test([string]$Name,[string]$Executable,[string[]]$Arguments = @()) {
     & $Executable @Arguments | Out-Host
@@ -60,22 +62,22 @@ foreach ($image in $beforeImages.Keys) {
 }
 $manifest = Get-Content -LiteralPath (Join-Path $project 'manifest.json') -Raw | ConvertFrom-Json
 $mod = Get-Content -LiteralPath (Join-Path $project 'mod.json') -Raw | ConvertFrom-Json
-if ($manifest.version -ne '0.3.0' -or $mod.version -ne $manifest.version -or $manifest.entry -ne 'AutoRestock.dll' -or $manifest.type -ne 'preload-native' -or $mod.dll -ne $manifest.entry) { throw 'Loader metadata mismatch.' }
+if ($manifest.version -ne '0.3.1' -or $mod.version -ne $manifest.version -or $manifest.entry -ne 'AutoRestock.dll' -or $manifest.type -ne 'preload-native' -or $mod.dll -ne $manifest.entry) { throw 'Loader metadata mismatch.' }
 $configText = Get-Content -LiteralPath (Join-Path $project 'config.json') -Raw
 if (-not ($configText | Test-Json -SchemaFile (Join-Path $project 'config.schema.json'))) { throw 'Invalid default config.' }
 $config = $configText | ConvertFrom-Json
 if ($config.enabled -ne $true -or $config.preRestockThreshold -ne 17) { throw 'Unexpected packaged defaults.' }
 if ($PackageZip) {
-    $expectedZip = '90E19A615C1054CE72F123A52B31E3F3C71643937D1641F0EED1389DD424E5F8'
+    $artifacts = Get-Content -LiteralPath (Join-Path $project 'docs/release-artifacts-0.3.1.json') -Raw | ConvertFrom-Json
+    if ($artifacts.version -ne $manifest.version -or $artifacts.files.'AutoRestock.dll' -ne '1C87F52F1E3FB51E881A5ACF2396B6FD4270F54E02B1E899E87AD9F542CCD556') { throw 'Wrong frozen release artifact manifest.' }
+    $expectedZip = $artifacts.archiveSha256
     if ((Get-FileHash -LiteralPath $PackageZip -Algorithm SHA256).Hash -ne $expectedZip) { throw 'Not the official frozen ZIP.' }
-    $files = @{
-        'AutoRestock.dll' = 'C2073234D4611FF6241340A1117B33815268D45C00C7075049B39D93E8C8FE6A'
-        'manifest.json' = 'CCED2657FA58C737C14C41FE4E564A53630150DD08823291A1B106D8D1D0C6FF'
-        'mod.json' = '4841C01E5FABC2F30BF64CA17B9383A04C2DE725D8FC774E45665F697610FD5A'
-        'config.json' = '72BBC67DB753D28EA87D4DBBF04AFAB669E03178AAB88EF014DAC73D3D81D78B'
-        'config.schema.json' = '3321F47493CB308479CC25BA1F527F7AFBBAC21629DCD30B0A9718CADA6F2EE1'
-        'README.md' = 'AF8384B966B55B7602805DCA446D04681455281F579DDED2905EEBADDB292823'
-        'THIRD_PARTY_NOTICES.txt' = '650DF50E50B53BA97B8B7BC216E4A89FBB910C77A650AC801469D8CB355DFE1B'
+    $files = @{}
+    $expectedNames = @('AutoRestock.dll','manifest.json','mod.json','config.json','config.schema.json','README.md','THIRD_PARTY_NOTICES.txt')
+    if (@($artifacts.files.PSObject.Properties).Count -ne 7) { throw 'Unexpected artifact whitelist.' }
+    foreach ($name in $expectedNames) {
+        if ($artifacts.files.$name -notmatch '^[0-9A-F]{64}$') { throw "Invalid artifact hash: $name" }
+        $files[$name] = $artifacts.files.$name
     }
     $zip = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $PackageZip).Path)
     try {
@@ -96,5 +98,5 @@ if ($PackageZip) {
     SuppliedImagesReadOnlyVerified = $beforeImages.Count
     FrozenOfficialZipChecked = [bool]$PackageZip
     GameplayTested = $false; Installed = $false
-    Note = 'Fresh public-source offline checks; no game process control or release DLL replacement. Historical 115 tests and user gameplay acceptance are separate evidence.'
+    Note = 'Fresh public-source offline checks; no game process control or release DLL replacement. Historical 123 development records and user gameplay acceptance are separate evidence.'
 } | ConvertTo-Json

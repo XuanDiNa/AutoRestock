@@ -91,6 +91,22 @@ int main() {
         CHECK(!SameNativeItem(api,nullptr,&other));
         auto incomplete=api;incomplete.equal=nullptr;
         CHECK(!SameNativeItem(incomplete,&borrowed,&other));
+        // Native canMerge rejects max-stack-one items even when full equals
+        // accepts them. It is not an identity comparator for tools.
+        auto singleton=Item(1,49),sameSingleton=Item(1,49);
+        Put(&singleton,64,std::uint8_t{1});Put(&sameSingleton,64,std::uint8_t{1});
+        auto unstackable=api;unstackable.merge=[](void const*,void const*){return false;};
+        CHECK(SameNativeItem(unstackable,&singleton,&sameSingleton));
+        Put(&sameSingleton,60,int{2});CHECK(!SameNativeItem(unstackable,&singleton,&sameSingleton));
+        CHECK(SameNativeToolIgnoringDamage(unstackable,&singleton,&sameSingleton));
+        Put(&sameSingleton,56,int{456});CHECK(!SameNativeToolIgnoringDamage(unstackable,&singleton,&sameSingleton));
+        // Full native equality may admit a same-named but distinct item object;
+        // singleton matching must still require the exact underlying item.
+        sameSingleton=singleton;static std::uintptr_t otherItem=0x87654321;
+        Put(&sameSingleton,8,&otherItem);auto wildcard=unstackable;
+        wildcard.equal=[](void const*,void const*){return true;};
+        CHECK(!SameNativeItem(wildcard,&singleton,&sameSingleton));
+        CHECK(!SameNativeItem(unstackable,&borrowed,&other)); // stackable path is unchanged
         std::cout<<"PASS: stable native ownership, flags0 lifetime, exact/symmetric compatibility, owned-only durability normalization\n";
         return 0;
     }catch(std::exception const& e){std::cerr<<e.what()<<'\n';return 1;}

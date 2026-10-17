@@ -48,6 +48,7 @@ void Use(Runtime& runtime,OrdinaryFixture& x,int after){
         Put(implementation,8,player);Put(table,16,base+contract->use);
     }else {Put(operation,0,base+contract->use);Put(operation,8,&player);}
     auto capture=runtime.BeginUse(x.inventory,operation,true,true,Config{true,17},1);CHECK(capture);
+    runtime.ObserveToolOperation(x.inventory,operation,true,100);
     Put(&x.actualSlots[2],34,static_cast<std::uint8_t>(after));runtime.EndUse(*capture,true,true,Config{true,17},1);
 }
 void Incoming(Runtime& runtime,OrdinaryFixture& x,int slot,std::uint64_t now){
@@ -59,6 +60,53 @@ void Incoming(Runtime& runtime,OrdinaryFixture& x,int slot,std::uint64_t now){
 }
 int main(){try{
     for(auto const& c:contracts){contract=&c;
+        { // Exact-ID native working-copy break, applied later; identical
+          // ordinary source/destination and original setters under all3 ABIs.
+            OrdinaryFixture x;PrepareCompat(x);
+            for(auto p:{&x.actualSlots[2],&x.actualSlots[9]}){Put(p,34,std::uint8_t{1});Put(p,64,std::uint8_t{1});}
+            Put(&x.actualSlots[2],60,int{31});Put(&x.actualSlots[9],60,int{2});
+            auto api=Native(true);api.stack.merge=[](void const*,void const*){return false;};
+            Runtime runtime{api,WorldBinding(),base};auto now=GetTickCount64();
+            CHECK(runtime.SelectBackend(Backend::RemoteOrdinary,10,now));
+            CHECK(!runtime.Tick(x.manager,true,true,Config{},now,1));
+            OwnedStack working;CHECK(working.Copy(api.stack,&x.actualSlots[2]));
+            auto capture=runtime.BeginToolHurt(working.Get(),x.player,true,true,Config{},1);CHECK(capture);
+            Put(const_cast<void*>(working.Get()),34,std::uint8_t{});
+            CHECK(runtime.EndToolHurt(*capture,working.Get(),true,true,Config{},1));
+            CHECK(!runtime.Tick(x.manager,true,true,Config{},now+1,1) && x.sends==0);
+            Put(&x.actualSlots[2],34,std::uint8_t{});
+            CHECK(runtime.Tick(x.manager,true,true,Config{},now+2,1)==TransferResult::Queued);
+            CHECK(x.sends==1 && x.requests==0 && Read<int>(&x.actualSlots[2],60)==2);
+            runtime.Reset();
+        }
+        { // Native world-destroy capture must not depend on either operation ABI.
+            OrdinaryFixture x;PrepareCompat(x);
+            Put(&x.actualSlots[2],34,std::uint8_t{1});Put(&x.actualSlots[2],64,std::uint8_t{1});
+            Runtime runtime{Native(true),WorldBinding(),base};CHECK(runtime.SelectBackend(Backend::RemoteOrdinary,10,100));
+            CHECK(!runtime.Tick(x.manager,true,true,Config{},100,1));while(runtime.TakeDiagnostic()){}
+            alignas(8) std::byte gameMode[16]{};Put(gameMode,8,static_cast<void*>(x.player));
+            auto capture=runtime.BeginDestroy(gameMode,true,true,Config{},1);CHECK(capture);
+            Put(&x.actualSlots[2],34,std::uint8_t{});runtime.EndUse(*capture,true,true,Config{},1);
+            bool depleted=false;
+            while(auto e=runtime.TakeDiagnostic())if(e->kind==DiagnosticKind::ToolTrace && e->tool.stage==ToolStage::Use){
+                CHECK(e->tool.invoker==9 && e->tool.depletedByUse && e->tool.depletions==1);depleted=true;
+            }
+            CHECK(depleted && x.sends==0 && x.requests==0);
+        }
+        { // Both the45 owning-function and51/52 function-ref diagnostic reads.
+            OrdinaryFixture x;PrepareCompat(x);
+            Put(&x.actualSlots[2],34,std::uint8_t{1});Put(&x.actualSlots[2],64,std::uint8_t{1});
+            Runtime runtime{Native(true),WorldBinding(),base};CHECK(runtime.SelectBackend(Backend::RemoteOrdinary,10,100));
+            CHECK(!runtime.Tick(x.manager,true,true,Config{},100,1));while(runtime.TakeDiagnostic()){}
+            Use(runtime,x,0);bool operation=false,depletion=false;
+            while(auto e=runtime.TakeDiagnostic())if(e->kind==DiagnosticKind::ToolTrace){
+                if(e->tool.stage==ToolStage::Operation){
+                    CHECK(e->tool.operationRva==c.use && e->tool.captured && e->tool.operations==1);operation=true;
+                }
+                if(e->tool.stage==ToolStage::Use){CHECK(e->tool.depletedByUse && e->tool.depletions==1);depletion=true;}
+            }
+            CHECK(operation && depletion && x.sends==0 && x.requests==0);
+        }
         {
             Fixture x;Adapt(x);auto api=Native(false);auto source=x.source,destination=x.destination;ResponseTracker tracker;
             CHECK(ExecuteTransfer(api,base,x.manager,x.player,{9,2,20,17},&source,&destination,tracker)==TransferResult::Queued);

@@ -1,86 +1,115 @@
-# 驗證範圍 / Verification scope
+# Verification and test coverage / 驗證與測試範圍
 
-## 中文
+## English
 
-正式套件是使用者已驗收的原二進位，不以公開原始碼的新編譯結果取代。
-套件版本 0.3.0；DLL／日誌內部識別仍為 0.3.0-test3。
+### Release artifact and manual acceptance
 
-| 證據 | 範圍與限制 |
-| --- | --- |
-| 人工驗收 | 使用者回報 26.45、26.51、26.52 正常使用，對應精確版本 1.26.45.01、1.26.51.01、1.26.52.03 的實測環境 |
-| 原 DLL 歷史離線證據 | 原建置記錄 115 次測試執行；包含私有分析及原生葉函式實驗，不全部隨公開原始碼提供 |
-| 公開原始碼驗證器 | 每模式 25 個一般測試、三版各 6 個 hook 場景及 1 個 legacy ABI 場景、不支援程序拒絕，共 47 次；Debug＋Release 共 94 次 |
-| 可選六映像檢查 | 每模式另外 2 次呼叫，包含六映像的身分／載入保護／篡改拒絕與 52 原始／載入器映像；兩模式總數為 98 次 |
-| 套件檢查 | 固定 ZIP SHA256、7 個唯一根目錄檔案、逐檔雜湊、metadata 與 JSON schema |
+Version 0.3.1 packages the unchanged user-tested 0.3.1-test4 DLL. The user confirmed
+broken-tool replacement and normal use in single-player on exact Minecraft
+1.26.45.01, 1.26.51.01 and 1.26.52.03, including tools beyond the initial gold shovel.
+The packaged DLL SHA-256 is
+`1C87F52F1E3FB51E881A5ACF2396B6FD4270F54E02B1E899E87AD9F542CCD556`.
 
-不包含遊戲啟動、注入、安裝或人工操作。新增編譯的 DLL 不自動繼承人工驗收。
-不把 Ready、queued／deferred 或本地重新規劃當作伺服器 ACK。
-所有服務端、重連持久性／總量核對、所有恢復分支、網路狀態及長時間穩定性不由這次回報保證。
+Acceptance covers tested cases, not every item/metadata combination, server, network,
+recovery branch, reconnect-persistence scenario, or long-duration workload. Multiplayer
+tool-break replacement has not been separately accepted. Native accepted results and
+diagnostics do not replace the user's gameplay report.
+
+### Offline suites
+
+The frozen candidate has 123 recorded development verification executions, including private
+analysis/native-leaf laboratories not distributed here. This public source has an independent
+portable suite:
+
+- 29 plain test executables per build mode.
+- Three exact profiles, each with six native hook scenarios and one legacy ABI scenario.
+- One unsupported-host DLL refusal test per mode.
+- Total: 51 executions per mode, 102 for Debug and Release.
+- Optional six locally supplied images add two calls per mode: six-image identity/loaded
+  guards/tamper refusal and original/loader 52 profile checks. Both modes then total 106.
+
+Tool tests cover singleton identity, durability normalization on owned copies, delayed native
+break-to-hand application, spare damage preservation, and context/ID/UI/slot/expiry/manual-removal
+refusal. These use controlled external ABI bodies with production runtime logic, not the full game.
+
+All three exact profiles retain 98 mapped keys, 67 loaded-byte guards and 23 hooks. Public tests
+exercise forwarding, unwinding, and actual MinHook installation/removal/byte restoration in
+isolated fixture images; they do not attach to Minecraft.
+
+Publication check on 2026-10-18: fresh Debug and Release builds passed all 106 executions with
+six read-only game images. The frozen ZIP and all seven member hashes passed verification.
+Both the retained release DLL and the independent public rebuild passed AMD64, export and
+runtime-dependency checks; the retained DLL also refused an unsupported test host. The public
+rebuild has SHA-256 `DBCF4C06D064469A347A6327BED6EF9A6E509694FD6E07D9E0A40E4DD462EE54`
+and is not a release asset. These are offline results, not additional gameplay acceptance.
+
+### Reproduce public-source checks
+
+Requirements: Windows x64, Visual Studio 2022 C++ tools/Windows SDK, PowerShell 7, and xmake.
+The JSON header is vendored; xmake obtains MinHook 1.3.4. Source licensing is not otherwise
+granted. See the third-party notices.
 
 ```powershell
-# 一般公開原始碼測試，不需要遊戲映像
 pwsh -File tools/verify_release.ps1
 
-# 如需唯讀的六映像測試，按版本與形式傳入合法自備檔案
+# Optional: legal, locally supplied files in this exact order.
 $images = @(
     'C:/GameImages/45/original.exe', 'C:/GameImages/45/loader.exe',
     'C:/GameImages/51/original.exe', 'C:/GameImages/51/loader.exe',
     'C:/GameImages/52/original.exe', 'C:/GameImages/52/loader.exe'
 )
-./tools/verify_release.ps1 -GameImages $images -PackageZip './dist/AutoRestock_0.3.0_MC26.45-26.51-26.52.zip'
+./tools/verify_release.ps1 -GameImages $images -PackageZip './dist/AutoRestock_0.3.1_MC26.45-26.51-26.52.zip'
 ```
 
-上例路徑只是範例，不是私人工作區路徑。遊戲檔案需自行合法取得，不應上傳 GitHub。
-公開副本排除研究模型、抽取遊戲程式碼的葉函式實驗、IDA 匯出與私人分析腳本；
-保留原生版本表及必要 entry guards，不以外部未知版本掃描取代精確匹配。
+These paths are examples, not distributed game files. The verifier performs fresh builds unless
+`-SkipBuild` is specified. It never controls the game, installs plugins, changes supplied images,
+or replaces/repackages the official DLL. `-PackageZip` checks the archive and all seven member
+hashes against [release-artifacts-0.3.1.json](release-artifacts-0.3.1.json), plus loader metadata
+and default JSON.
 
-## English
+Production files preserve the tested development source bytes. Public build paths and test
+selection are portable adaptations. A rebuilt DLL is not automatically gameplay-tested;
+only the retained tested DLL is uploaded. Raw game-code laboratories, research models, IDA
+databases, decompilation and private tooling are excluded. Earlier 0.3.0 release notes remain
+historical documents, not current claims.
 
-The official package preserves the exact manually accepted binary. Delivery
-version is 0.3.0; internal DLL/log identity remains 0.3.0-test3.
+## 繁體中文
 
-- Manual acceptance: the user reported normal use on exact 1.26.45.01,
-  1.26.51.01 and 1.26.52.03 in their tested environments.
-- Historical frozen-build evidence: 115 recorded offline executions, including
-  private analysis/native-leaf laboratories not distributed in this repository.
-- Public verifier: 25 plain tests, three versions × six hook scenarios plus one
-  legacy ABI scenario, and unsupported-host refusal = 47 executions per mode,
-  or 94 for Debug and Release.
-- Optional locally supplied images add two executions per mode: a six-image
-  identity/loaded-guard/tamper suite and original/loader 52 profile checks.
-  Both modes with images therefore run 98 executions.
-- Package checks verify the frozen ZIP hash, seven unique root entries, every
-  entry's hash, loader metadata and JSON schema.
+### 正式套件與人工驗收
 
-Commands are shown above. Six-image input order is 45 original,45 loader,
-51 original,51 loader,52 original,52 loader. Obtain images legally yourself;
-do not distribute them. Verification never starts/attaches to the game, installs
-a plugin, rewrites supplied images or replaces/repackages the official DLL.
-`-SkipBuild` is only for testing an already-built matching output directory;
-the default performs fresh builds.
+0.3.1 沿用使用者已實測的 0.3.1-test4 原 DLL。使用者已確認精確版本 1.26.45.01、
+1.26.51.01、1.26.52.03 在單人世界的工具損壞替換與正常使用，並測過最初金鏟以外的工具。
+套件 DLL 的 SHA-256 列於上方，不以重新編譯的結果替換。
 
-Public source retains exact native version profiles and necessary entry guards,
-but excludes raw game-code leaf laboratories, research models, decompilation,
-IDA databases and private analysis tooling. The public test count is not the
-same suite as the historical 115 executions. A rebuilt DLL is not automatically
-the user-accepted binary. See the release notes for publication-time results.
+驗收限實測情境，不代表所有物品資料、服務端、網路、恢復分支、重連持久性或長時間負載。
+伺服器工具補貨尚未單獨驗收；原生接受結果與診斷資訊不能代替人工遊戲回報。
 
-None of these checks proves every server brand, network condition, recovery
-branch, reconnect-persistence/item-conservation case or long-duration workload.
-Ready and queued/deferred diagnostics are not remote server acknowledgments.
+### 離線測試
 
-## 本次公開前核對 / Publication-time verification — 2026-10-17
+凍結候選版記錄 123 項開發驗證，其中私人分析／原生葉函式實驗不隨公開倉庫提供。
+公開副本每模式 29 個一般測試、三版各 6 個 hook 場景及 1 個 legacy ABI 場景、
+以及 1 個不支援程序拒絕，共 51 次；Debug／Release 合計 102 次。
+合法自備六份遊戲映像後，每模式再加 2 次呼叫，合計 106 次。
 
-乾淨公開副本的 Debug／Release 建置成功，各 49 次離線測試通過（含合法自備六映像），
-合計 **98 次**。40 個 production 原始碼／標頭檔與開發來源逐位元組一致；
-Git 暫存區也保留其原始位元組。正式套件的 AMD64、必要匯出、依賴及 7 檔雜湊已核對。
-新編譯 Release DLL 雜湊為 `4DD93EEA5B6BECC5192974CDE28053F65689006C023CC80B1ECF7823769EBBF0`，
-與已驗收 DLL 不同，因此不作為附件、不安裝，也不宣稱通過人工實測。
+工具測試包含不可堆疊物品比對、自有副本耐久正規化、延後破損套用、備品耐久保留，
+以及身分／介面／快捷格／逾時／手動移除等拒絕情境。外部原生函式由測試 ABI 替身提供，
+執行的是 production 邏輯，不等於在遊戲內實測。
 
-Clean public-copy Debug and Release builds succeeded, each with 49 passing
-offline executions including the six locally supplied images: **98 total**.
-All 40 production source/header files and their staged Git blobs preserve the
-original bytes. The official package's AMD64 architecture, required exports,
-dependencies and seven entry hashes were checked separately. The newly built
-Release DLL hash shown above differs from the accepted DLL; it is not uploaded
-as a release asset, installed or claimed to have passed gameplay testing.
+三個精確版本各有 98 個映射鍵、67 處載入保護及 23 個 hook。公開實驗在隔離 fixture
+映像中測試轉發、例外及實際 MinHook 安裝／移除／位元組還原，不附加 Minecraft。
+
+2026-10-18 發佈前重新建置 Debug／Release，搭配唯讀六份遊戲映像，106 次驗證全部通過；
+正式 ZIP 與七個成員的雜湊核對通過。沿用的正式 DLL 與公開副本新建置 DLL 均通過
+AMD64、匯出及執行階段依賴檢查，正式 DLL 另通過不支援測試程序拒絕檢查。
+公開副本新建置的雜湊列於英文區塊，不作為 Release 附件，也不視為新增的遊戲內驗收。
+
+### 自行驗證
+
+需要 Windows x64、Visual Studio 2022 C++ 工具／Windows SDK、PowerShell 7 及 xmake。
+指令見上方英文區塊。驗證器預設重新建置；`-SkipBuild` 只用於已備好的對應輸出。
+`-PackageZip` 依同目錄的 release-artifacts JSON 核對正式 ZIP 及七個成員，另檢查 metadata 與 JSON。
+
+驗證器不控制遊戲、不安裝插件、不改遊戲映像，也不重包或替換正式 DLL。
+公開 production 檔案保持開發來源位元組，只有建置路徑與測試選擇作可攜式適配。
+新編譯 DLL 不會自動繼承人工驗收。公開倉庫不含遊戲碼抽取實驗、研究模型、IDA／反編譯資料
+或私人分析工具；舊 0.3.0 版本說明保留為歷史紀錄。

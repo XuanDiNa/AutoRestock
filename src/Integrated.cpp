@@ -41,6 +41,26 @@ bool IntegratedBridge::Ready(ActorIdentity const& id,std::uint64_t now) const no
     return local_.Load(l) && seen_.Load(s) && SameLocal(l,id) && Fresh(now,l[3]) &&
         s[0] && s[0]!=l[0] && s[1]==l[1] && s[2]==l[2] && s[4]==l[4] && Fresh(now,s[3]);
 }
+PairingEvidence IntegratedBridge::Inspect(ActorIdentity const& id,std::uint64_t now) const noexcept {
+    PairingEvidence e;e.localValid=id.Valid();e.localRole=static_cast<int>(id.role);
+    IdentityWords l{},s{};std::array<std::uint64_t,10> c{};
+    if(!local_.Load(l))return e;
+    e.localStored=l[0]!=0;e.localMatches=SameLocal(l,id);e.localFresh=e.localStored && Fresh(now,l[3]);
+    if(e.localStored && id.Valid()){
+        e.candidateRegistryDistinct=l[0]!=id.registry;
+        e.candidateUniqueMatches=l[1]==id.unique;e.candidateRuntimeMatches=l[2]==id.runtime;
+    }
+    if(seen_.Load(s) && s[0]){
+        e.serverSeen=true;e.serverFresh=Fresh(now,s[3]);e.registryDistinct=s[0]!=l[0];
+        e.uniqueMatches=e.localStored && s[1]==l[1];e.runtimeMatches=e.localStored && s[2]==l[2];
+        e.epochMatches=e.localStored && s[4]==l[4];
+    }
+    if(counts_.Load(c) && c[0]){
+        e.countsPresent=true;e.countsFresh=Fresh(now,c[3]);
+        e.countsMatch=e.localStored && e.serverSeen && c[0]==s[0] && c[1]==l[1] && c[2]==l[2] && c[4]==l[4];
+    }
+    return e; // independently copied atomics; not an admission/acceptance snapshot
+}
 bool IntegratedBridge::Arm(ActorIdentity const& id,std::uint64_t now,std::int32_t nativeId,std::uint64_t policyId) noexcept {
     if(Pending() || nativeId>=-1 || (nativeId&1) || !policyId || !Ready(id,now) || nextToken_>=UINT32_MAX) return false;
     IdentityWords s{},l{};if(!seen_.Load(s) || !local_.Load(l) || !SameLocal(l,id) || s[4]!=l[4]) return false;

@@ -37,6 +37,16 @@ int main(){try{
     bad=Stack(5,0,123,0);CHECK(!map.Identify(api,&bad,false));
     CHECK(!map.Identify(api,nullptr,false));
     map.Reset();CHECK(owned.empty());
+    { // The real native merge predicate refuses tools, including self copies.
+        NativeIdentity tools;auto singletonApi=api;
+        singletonApi.merge=[](void const*,void const*){return false;};
+        auto initial=tools.Identify(singletonApi,&tool,true);CHECK(initial);
+        for(int n=0;n<400;++n){auto again=tools.Identify(singletonApi,&tool,true);
+            CHECK(again && again->identity==initial->identity && again->withoutDurability==initial->withoutDurability);}
+        auto spare=tools.Identify(singletonApi,&replacement,true);
+        CHECK(spare && spare->identity!=initial->identity && spare->withoutDurability==initial->withoutDurability);
+        tools.Reset();CHECK(owned.empty());
+    }
     std::cout<<"PASS: stable native identity classes, full metadata/capacity distinctions, owned-only durability and reset lifetime\n";
     return 0;
 }catch(std::exception const& e){std::cerr<<e.what()<<'\n';return 1;}}

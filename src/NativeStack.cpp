@@ -47,10 +47,19 @@ void OwnedStack::Reset() noexcept {
 }
 int OwnedStack::Count() const noexcept {return storage_ ? Read<std::uint8_t>(storage_.get(),34) : 0;}
 bool SameNativeItem(StackApi const& api,void const* a,void const* b) {
-    return api.Complete() && Nonempty(api,a) && Nonempty(api,b) &&
-        Read<std::uint16_t>(a,32)==Read<std::uint16_t>(b,32) &&
-        Read<void const*>(a,24)==Read<void const*>(b,24) &&
-        api.merge(a,b) && api.merge(b,a) && api.equal(a,b) && api.equal(b,a);
+    if(!api.Complete() || !Nonempty(api,a) || !Nonempty(api,b) ||
+        Read<std::uint16_t>(a,32)!=Read<std::uint16_t>(b,32) ||
+        Read<void const*>(a,24)!=Read<void const*>(b,24))return false;
+    // IDA2488D80 calls isStackable2488A30: capacity1 always returns false,
+    // including a tool compared with its own complete copy. For singletons,
+    // require the exact Item target plus symmetric native FULL equality.
+    // Do not drop tag/components, aux/block or widen the stackable path.
+    bool singleton=api.capacity(a)==1 && api.capacity(b)==1;
+    if(singleton){
+        auto first=Read<void const*>(Read<void const*>(a,8),0);
+        if(!first || first!=Read<void const*>(Read<void const*>(b,8),0))return false;
+    }else if(!api.merge(a,b) || !api.merge(b,a))return false;
+    return api.equal(a,b) && api.equal(b,a);
 }
 bool SameNativeToolIgnoringDamage(StackApi const& api,void const* a,void const* b) {
     if(!api.Complete() || !Nonempty(api,a) || !Nonempty(api,b)) return false;

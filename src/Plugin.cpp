@@ -6,6 +6,7 @@
 #include "AutoRestock/ValidationDiagnostic.h"
 #include "AutoRestock/RemoteSession.h"
 #include "AutoRestock/RemoteAdmissionDiagnostic.h"
+#include "AutoRestock/HookDiagnostic.h"
 #include <intrin.h>
 #include <exception>
 #include <MinHook.h>
@@ -19,6 +20,8 @@ using namespace autorestock;
 using FlushFunction=std::intptr_t(*)(void*);
 using ResponseFunction=std::intptr_t(*)(void*,void*);
 using OperationFunction=std::intptr_t(*)(void*,void*,void*);
+using WorldDestroyFunction=std::intptr_t(*)(void*,void*,std::uint8_t);
+using ToolHurtFunction=std::intptr_t(*)(void*,int,void*);
 using ServerPacketFunction=void(*)(void*,void*,void*);
 using NormalFunction=std::uint32_t(*)(void*,void*,std::uint32_t);
 using VerifySlotFunction=std::uint32_t(*)(void*,void*,void const*,std::uint8_t const*);
@@ -27,6 +30,8 @@ using InventorySetFunction=void(*)(void*,std::uint32_t,void const*,std::uint32_t
 FlushFunction originalFlush{};
 ResponseFunction originalResponse{};
 OperationFunction originalOperation{};
+WorldDestroyFunction originalWorldDestroy{};
+ToolHurtFunction originalToolHurt{};
 ServerPacketFunction originalServerPacket{};
 NormalFunction originalNormal{};
 VerifySlotFunction originalVerifySlot{};
@@ -44,6 +49,7 @@ std::atomic<std::uint64_t> queued{},rejected{},faults{};
 std::atomic<std::uint64_t> responseCalls{},responseOwnerCalls{},responseMatches{};
 std::atomic<std::uint64_t> serverPackets{},pairedPackets{},normalResults{};
 std::atomic<std::uint64_t> serverInventorySamples{};
+HookDiagnostics hookDiagnostics;
 HINSTANCE module{};
 Runtime* runtime{}; // pinned for process lifetime; never destroy native copies during DLL detach
 WorldApi worldApi{};
@@ -163,9 +169,16 @@ std::uint32_t HookVerifySlot(void* functor,void* player,void const* action,std::
     return result;
 }
 void HookServerPacket(void* packet,void* player,void* context){
+    hookDiagnostics.Hit(HookCounter::ServerEntry);
     serverPackets.fetch_add(1,std::memory_order_relaxed);
     bool observe=status.load(std::memory_order_acquire)==1 && runtime && worldApi.profile;
     auto identity=observe?ReadActorIdentity(player):ActorIdentity{};
+    if(observe){
+        hookDiagnostics.Hit(HookCounter::ServerActive);
+        if(identity.Valid())hookDiagnostics.Hit(HookCounter::ServerIdentityValid);
+        if(identity.role==ActorRole::Local)hookDiagnostics.Hit(HookCounter::ServerRoleLocal);
+        if(identity.role==ActorRole::Server)hookDiagnostics.Hit(HookCounter::ServerRoleServer);
+    }
     auto transaction=worldApi.profile?Read<void*>(packet,Layout().packetComplex):nullptr;
     auto ticket=observe?integrated.BeginServer(identity,Read<std::int32_t>(packet,Layout().packetRequest),GetTickCount64()):ServerTicket{};
     ServerFrame frame{transaction,player,-1,false,ticket};auto previous=currentServerFrame;currentServerFrame=&frame;
@@ -176,6 +189,13 @@ void HookServerPacket(void* packet,void* player,void* context){
         // Ordinary packets can overtake queued world-use; pairing alone is
         // not evidence that the previous predicted count was applied.
         auto counts=ReadInventoryCounts(*worldApi.profile,player,imageBase);
+        if(counts)hookDiagnostics.Hit(HookCounter::ServerCounts);
+        auto evidence=integrated.Inspect(identity,GetTickCount64());
+        if(evidence.localStored)hookDiagnostics.Hit(HookCounter::ServerLocalStored);
+        if(evidence.localFresh)hookDiagnostics.Hit(HookCounter::ServerLocalFresh);
+        if(evidence.candidateRegistryDistinct)hookDiagnostics.Hit(HookCounter::ServerRegistryDistinct);
+        if(evidence.candidateUniqueMatches)hookDiagnostics.Hit(HookCounter::ServerUniqueMatch);
+        if(evidence.candidateRuntimeMatches)hookDiagnostics.Hit(HookCounter::ServerRuntimeMatch);
         if(counts)serverInventorySamples.fetch_add(1,std::memory_order_relaxed);
         integrated.EndServer(identity,ticket,frame.result,GetTickCount64(),counts);
         if(ticket.token)pairedPackets.fetch_add(1,std::memory_order_relaxed);
@@ -278,8 +298,14 @@ std::intptr_t HookResponse(void* manager,void* vector){
     return result;
 }
 std::intptr_t HookOperation(void* inventory,void* listener,void* operation){
+    hookDiagnostics.Hit(HookCounter::OperationEntry);
     std::optional<UseCapture> capture;
-    bool observe=status.load(std::memory_order_acquire)==1 && runtime && RemoteOwner() && !nativeDepth;
+    bool available=status.load(std::memory_order_acquire)==1 && runtime;
+    bool owner=available && RemoteOwner();
+    bool observe=owner && !nativeDepth;
+    if(!available)hookDiagnostics.Hit(HookCounter::NotReady);
+    else if(!owner)hookDiagnostics.Hit(HookCounter::ForeignOwner);
+    else if(nativeDepth)hookDiagnostics.Hit(HookCounter::Nested);
     if(!OnOwner() && inventory && restockInventory.load(std::memory_order_acquire)==reinterpret_cast<std::uintptr_t>(inventory))remote.Poison();
     auto lifetime=observe?nativeLifetimeEpoch:0;
     auto value=settings.load(std::memory_order_acquire);
@@ -287,6 +313,11 @@ std::intptr_t HookOperation(void* inventory,void* listener,void* operation){
         try{
             auto player=worldApi.profile?UsePlayer(*worldApi.profile,imageBase,operation):nullptr;
             auto manager=Read<void*>(player,Layout().managerPlayer);
+            if(player)hookDiagnostics.Hit(HookCounter::KnownPlayer);
+            if(manager && reinterpret_cast<std::uintptr_t>(manager)==restockManager)hookDiagnostics.Hit(HookCounter::ManagerMatch);
+            if(inventory && reinterpret_cast<std::uintptr_t>(inventory)==restockInventory.load(std::memory_order_acquire))
+                hookDiagnostics.Hit(HookCounter::InventoryMatch);
+            if(remote.Faulted())hookDiagnostics.Hit(HookCounter::RemoteFault);
             // This hook sees every Inventory transaction-context callback,
             // not just local world use. Unknown operations or other inventories
             // must never select/reset the shared restock session. BeginUse
@@ -297,8 +328,15 @@ std::intptr_t HookOperation(void* inventory,void* listener,void* operation){
                 inventory && reinterpret_cast<std::uintptr_t>(inventory)==restockInventory.load(std::memory_order_acquire) &&
                 !remote.Faulted()){
                 auto focus=CurrentFocus();
+                hookDiagnostics.Hit(HookCounter::BeginAttempt);
+                if(!(value&1))hookDiagnostics.Hit(HookCounter::ConfigDisabled);
+                if(!focus.foreground)hookDiagnostics.Hit(HookCounter::ForegroundFalse);
+                if(!focus.hidden)hookDiagnostics.Hit(HookCounter::CursorVisible);
                 capture=runtime->BeginUse(inventory,operation,focus.foreground,focus.hidden,DecodeSettings(value),value>>8);
+                hookDiagnostics.Hit(capture?HookCounter::Captured:HookCounter::NotCaptured);
             }
+            if(inventory && reinterpret_cast<std::uintptr_t>(inventory)==restockInventory.load(std::memory_order_acquire) && !remote.Faulted())
+                runtime->ObserveToolOperation(inventory,operation,capture.has_value(),GetTickCount64());
         }catch(...){Fail();}
     }
     std::intptr_t result{};
@@ -306,10 +344,83 @@ std::intptr_t HookOperation(void* inventory,void* listener,void* operation){
         Depth depth;
         result=originalOperation(inventory,listener,operation); // borrowed callback/listener ownership untouched
     }
+    hookDiagnostics.Hit(HookCounter::OriginalReturned);
     if(capture && status.load(std::memory_order_acquire)==1 && lifetime==nativeLifetimeEpoch && !remote.Faulted()){
         try{
             auto focus=CurrentFocus();value=settings.load(std::memory_order_acquire);
+            hookDiagnostics.Hit(HookCounter::EndCalled);
             runtime->EndUse(*capture,focus.foreground,focus.hidden,DecodeSettings(value),value>>8);
+        }catch(...){Fail();}
+    }
+    return result;
+}
+std::intptr_t HookWorldDestroy(void* gameMode,void* position,std::uint8_t face){
+    hookDiagnostics.Hit(HookCounter::DestroyEntry);
+    bool available=status.load(std::memory_order_acquire)==1 && runtime && worldApi.profile;
+    auto player=available?Read<void*>(gameMode,Layout().gameModePlayer):nullptr;
+    auto identity=available?ReadActorIdentity(player):ActorIdentity{};
+    bool server=identity.role==ActorRole::Server;
+    if(server)hookDiagnostics.Hit(HookCounter::DestroyServer);
+    std::optional<UseCapture> capture;
+    std::uint64_t lifetime{}; // owner-thread state; never read from the server callback
+    if(available && identity.role==ActorRole::Local && RemoteOwner() && !nativeDepth && !remote.Faulted() &&
+        reinterpret_cast<std::uintptr_t>(Read<void*>(player,Layout().managerPlayer))==restockManager &&
+        reinterpret_cast<std::uintptr_t>(Read<void*>(Read<void*>(player,Layout().playerSupplies),Layout().suppliesInventory))==
+            restockInventory.load(std::memory_order_acquire)){
+        hookDiagnostics.Hit(HookCounter::DestroyLocal);
+        lifetime=nativeLifetimeEpoch;
+        try{
+            auto focus=CurrentFocus();auto value=settings.load(std::memory_order_acquire);
+            capture=runtime->BeginDestroy(gameMode,focus.foreground,focus.hidden,DecodeSettings(value),value>>8);
+            if(capture)hookDiagnostics.Hit(HookCounter::DestroyCaptured);
+        }catch(...){Fail();}
+    }
+    std::intptr_t result{};
+    {Depth depth;result=originalWorldDestroy(gameMode,position,face);}
+    // No result or borrowed inventory escapes a throwing original.
+    if(status.load(std::memory_order_acquire)==1 && available){
+        if(server && ReadActorIdentity(player)==identity){
+            // A post-original server snapshot refreshes the existing pairing
+            // and count gate only. No packet/ticket means NO acceptance result.
+            auto counts=ReadInventoryCounts(*worldApi.profile,player,imageBase);
+            if(counts)hookDiagnostics.Hit(HookCounter::DestroyServerCounts);
+            integrated.EndServer(identity,{},-1,GetTickCount64(),counts);
+        }
+        if(capture && static_cast<std::uint8_t>(result) && lifetime==nativeLifetimeEpoch && !remote.Faulted()){
+            try{
+                auto focus=CurrentFocus();auto value=settings.load(std::memory_order_acquire);
+                runtime->EndUse(*capture,focus.foreground,focus.hidden,DecodeSettings(value),value>>8);
+                hookDiagnostics.Hit(HookCounter::DestroyEnd);
+            }catch(...){Fail();}
+        }
+    }
+    return result;
+}
+std::intptr_t HookToolHurt(void* stack,int amount,void* player){
+    hookDiagnostics.Hit(HookCounter::HurtEntry);
+    bool available=status.load(std::memory_order_acquire)==1 && runtime && worldApi.profile;
+    auto identity=available?ReadActorIdentity(player):ActorIdentity{};
+    if(identity.role==ActorRole::Server)hookDiagnostics.Hit(HookCounter::HurtServer);
+    std::optional<UseCapture> capture;
+    std::uint64_t lifetime{};
+    // May be nested inside native destroy/transaction work. No submission or
+    // request/consumption ledger changes take place inside this observer.
+    if(available && amount>0 && identity.role==ActorRole::Local && RemoteOwner() && !remote.Faulted() &&
+        reinterpret_cast<std::uintptr_t>(Read<void*>(player,Layout().managerPlayer))==restockManager &&
+        reinterpret_cast<std::uintptr_t>(Read<void*>(Read<void*>(player,Layout().playerSupplies),Layout().suppliesInventory))==
+            restockInventory.load(std::memory_order_acquire)){
+        hookDiagnostics.Hit(HookCounter::HurtLocal);lifetime=nativeLifetimeEpoch;
+        try{auto focus=CurrentFocus();auto value=settings.load(std::memory_order_acquire);
+            capture=runtime->BeginToolHurt(stack,player,focus.foreground,focus.hidden,DecodeSettings(value),value>>8);
+            if(capture)hookDiagnostics.Hit(HookCounter::HurtCaptured);
+        }catch(...){Fail();}
+    }
+    std::intptr_t result{};{Depth depth;result=originalToolHurt(stack,amount,player);}
+    if(capture && static_cast<std::uint8_t>(result) && status.load(std::memory_order_acquire)==1 &&
+        lifetime==nativeLifetimeEpoch && !remote.Faulted()){
+        try{auto focus=CurrentFocus();auto value=settings.load(std::memory_order_acquire);
+            if(runtime->EndToolHurt(*capture,stack,focus.foreground,focus.hidden,DecodeSettings(value),value>>8))
+                hookDiagnostics.Hit(HookCounter::HurtBreak);
         }catch(...){Fail();}
     }
     return result;
@@ -368,6 +479,8 @@ bool InstallHooks(){
         RESTOCK_HOOK(0x25B1D10,HookFlush,originalFlush),
         RESTOCK_HOOK(0x25B23F0,HookResponse,originalResponse),
         RESTOCK_HOOK(0x26AFFB0,HookOperation,originalOperation),
+        RESTOCK_HOOK(0x259ABB0,HookWorldDestroy,originalWorldDestroy),
+        RESTOCK_HOOK(0x2488FE0,HookToolHurt,originalToolHurt),
         RESTOCK_HOOK(0x1D5170,HookInventorySet,originalInventorySet),
         RESTOCK_HOOK(0x8B2D490,HookServerPacket,originalServerPacket),
         RESTOCK_HOOK(0x266C180,HookNormal,originalNormal),
@@ -387,7 +500,7 @@ bool InstallHooks(){
         RESTOCK_HOOK(0x16A9B90,HookDisconnect,originalDisconnect),
         RESTOCK_HOOK(0x16AE270,HookClosing,originalClosing)};
 #undef RESTOCK_HOOK
-    static_assert(std::size(hooks)==21);
+    static_assert(std::size(hooks)==23);
     void* targets[std::size(hooks)]{};
     for(unsigned i=0;i<std::size(hooks);++i)targets[i]=reinterpret_cast<void*>(GameAddress(static_cast<std::uint32_t>(hooks[i].rva)));
     auto initialized=MH_Initialize();
@@ -432,7 +545,54 @@ std::string AdmissionText(RemoteAdmissionEvent const& event){
         " mode="+std::to_string(event.mode)+" state="+std::to_string(event.route.state)+
         " constructorObserved="+(event.constructorObserved?"1":"0");
 }
+std::string HookDiagnosticText(HookSnapshot const& snapshot){
+    constexpr char const* names[]={"operations","notReady","foreignOwner","nested","inventoryMatch","knownPlayer","managerMatch","remoteFault",
+        "beginAttempt","configDisabled","foregroundFalse","cursorVisible","captured","notCaptured","originalReturned","endCalled",
+        "serverEntries","serverActive","serverIdentityValid","serverRoleLocal","serverRoleServer","serverCounts",
+        "serverLocalStored","serverLocalFresh","serverRegistryDistinct","serverUniqueMatch","serverRuntimeMatch",
+        "destroyEntries","destroyLocal","destroyCaptured","destroyEnd","destroyServer","destroyServerCounts",
+        "hurtEntries","hurtLocal","hurtCaptured","hurtBreak","hurtServer"};
+    static_assert(std::size(names)==static_cast<unsigned>(HookCounter::Count));
+    std::string line="HookTrace";
+    for(unsigned n=0;n<std::size(names);++n)line+=" "+std::string(names[n])+"="+std::to_string(snapshot.values[n]);
+    return line+" scope=process-lifetime independentlySampled=1 diagnosticOnly=1";
+}
 std::string DiagnosticText(Diagnostic const& e){
+    if(e.kind==DiagnosticKind::ToolTrace){
+        constexpr char const* stages[]={"sample","operation","use","gate","policy","reset","break-armed","break-applied","break-cancelled"};
+        constexpr char const* reasons[]={"none","inventory-busy","pairing-not-ready","authoritative-unavailable","count-mismatch",
+            "intentional-removal","no-depletion","no-matching-source","policy-no-transfer","transfer-queued","transfer-deferred","transfer-other"};
+        auto stage=static_cast<std::size_t>(e.tool.stage),reason=static_cast<std::size_t>(e.tool.reason);
+        auto sample=[](ToolObservation const& s){return std::string("readable=")+std::to_string(s.readable)+
+            ",empty="+std::to_string(s.empty)+",damageable="+std::to_string(s.damageable)+",count="+std::to_string(s.count)+
+            ",capacity="+std::to_string(s.capacity)+",variant="+std::to_string(s.native.variant)+
+            ",idKnown="+std::to_string(s.native.idKnown)+",id="+std::to_string(s.native.id);};
+        auto const& t=e.tool;
+        std::string text="ToolTrace observedAt="+std::to_string(e.time)+" backend="+(e.integrated?"integrated":e.ordinary?"remote-ordinary":"modern")+
+            " slot="+std::to_string(e.destination)+" stage="+(stage<std::size(stages)?stages[stage]:"unknown")+
+            " reason="+(reason<std::size(reasons)?reasons[reason]:"unknown")+
+            " before={"+sample(t.before)+"} after={"+sample(t.after)+"}"+
+            " operationRva="+std::to_string(t.operationRva)+" invokerOrdinal="+std::to_string(t.invoker)+
+            " captured="+std::to_string(t.captured)+" operations="+std::to_string(t.operations)+" captures="+std::to_string(t.captures)+
+            " completedUses="+std::to_string(t.completedUses)+" depletions="+std::to_string(t.depletions)+
+            " operationSamplesOmitted="+std::to_string(t.operationSamplesOmitted)+
+            " identityChanged="+std::to_string(t.identityChanged)+" depletedByUse="+std::to_string(t.depletedByUse)+
+            " intentionalRemoval="+std::to_string(t.intentionalRemoval)+" matchingSources="+std::to_string(t.matchingSources)+
+            " pending="+std::to_string(t.pending)+" transferReady="+std::to_string(t.transferReady)+
+            " mismatchSlot="+std::to_string(t.mismatchSlot)+" clientCount="+std::to_string(t.clientCount)+" serverCount="+std::to_string(t.serverCount);
+        if(e.integrated){auto const& p=t.pairing;
+            text+=" localValid="+std::to_string(p.localValid)+" localRole="+std::to_string(p.localRole)+
+                " localStored="+std::to_string(p.localStored)+" localMatches="+std::to_string(p.localMatches)+
+                " localFresh="+std::to_string(p.localFresh)+" serverSeen="+std::to_string(p.serverSeen)+
+                " serverFresh="+std::to_string(p.serverFresh)+" registryDistinct="+std::to_string(p.registryDistinct)+
+                " uniqueMatches="+std::to_string(p.uniqueMatches)+" runtimeMatches="+std::to_string(p.runtimeMatches)+
+                " epochMatches="+std::to_string(p.epochMatches)+" countsPresent="+std::to_string(p.countsPresent)+
+                " countsFresh="+std::to_string(p.countsFresh)+" countsMatch="+std::to_string(p.countsMatch);
+        }
+        if(t.stage==ToolStage::Reset)text+=" resetCause="+std::to_string(static_cast<int>(e.resetCause))+
+            " worldGate="+WorldFailureName(static_cast<WorldFailure>(e.worldFailure));
+        return text+" diagnosticOnly=1";
+    }
     char const* kind=e.kind==DiagnosticKind::Request?"Request":e.kind==DiagnosticKind::Response?"Response":
         e.kind==DiagnosticKind::Reconciled?"Reconciled":e.kind==DiagnosticKind::Timeout?"Timeout":
         e.kind==DiagnosticKind::NativeResult?"NativeResult":e.kind==DiagnosticKind::PredictionSettled?"PredictionSettled":
@@ -566,7 +726,7 @@ DWORD WINAPI Worker(void*){
         std::wstring path(32768,L'\0');auto used=GetModuleFileNameW(module,path.data(),static_cast<DWORD>(path.size()));
         if(!used || used>=path.size()){status.store(-1,std::memory_order_release);return 0;}
         path.resize(used);directory=std::filesystem::path(path).parent_path();
-        Log("0.3.0-test3 loaded-base compatibility candidate starting; Bedrock 1.26.45.01,1.26.51.01,1.26.52.03; loaded header ImageBase must equal original preferred base OR this exact module base; disk preferred base and text SHA256 remain exact; same21 hooks,65 loaded guards per admitted image; no new native address,guard bypass or restock policy change; serverConfirmed=0; manual gameplay validation pending");
+        Log("0.3.1-test4 native tool-hurt candidate starting; Bedrock 1.26.45.01,1.26.51.01,1.26.52.03; 23 hooks,67 loaded guards per admitted image; singleton full identity and same-ID native break-to-hand application; no guard bypass or acceptance/reconciliation change; manual gameplay validation pending");
         auto game=GetModuleHandleW(nullptr);std::string error;
         auto native=BindNative(game,error);
         if(!native){Log("Inactive: "+error);status.store(-1,std::memory_order_release);return 0;}
@@ -588,12 +748,15 @@ DWORD WINAPI Worker(void*){
         runtime=new Runtime(*native,*world,imageBase,integrated);
         if(!InstallHooks()){Log("Inactive: guarded hook installation failed");status.store(-1,std::memory_order_release);return 0;}
         status.store(1,std::memory_order_release);
-        Log("Ready: 0.3.0-test3; 21 guarded hooks; 65 loaded guards; integrated/modern retain native acceptance AND exact reconciliation; ordinary actual native pair keeps1500ms serialization; an actual world-use depletion may provide one-shot empty fallback through later empty sync; ordinary plan cancellation/mismatch/expiry enters1500ms local quarantine then NEW complete main+27-source two-Tick sampling in the same admitted generation; no old-request completion,replay,manual resend or ACK inference; JSON-only,main hand from slots9-35; UI/selection/settings/lifetime clears fallback; fatal native/session/owner checks remain fail-closed; live behavior unverified");
+        Log("Ready: 0.3.1-test4; 23 guarded hooks; 67 loaded guards; singleton full identity and exact-ID native tool break; HookTrace includes hurt entry/local/capture/break/server counters; changed HookTrace at most once per2000ms; worker-only formatting and log I/O; JSON-only,main hand from slots9-35; manual gameplay validation pending");
+        HookDiagnosticReporter hookReporter;
         std::string previousError=reload.Error();
         int previousSession=-1,previousMode=-2;std::uint64_t previousGeneration{},previousBirths{},previousBindings{},previousStarts{},previousStartCalls{};
         bool previousRemoteFault{};
         std::uint64_t previousQueued{},previousRejected{},previousServer{},lastReport=GetTickCount64(),previousDropped{},previousValidationDropped{},previousAdmissionDropped{};
         for(;;){
+            auto hookSample=hookDiagnostics.Snapshot();
+            if(hookReporter.Poll(hookSample,GetTickCount64()))Log(HookDiagnosticText(hookSample));
             auto selected=sessionState.load(std::memory_order_acquire),mode=observedRemoteMode.load(std::memory_order_acquire);
             auto generation=sessionGeneration.load(std::memory_order_relaxed);
             auto births=remoteBirths.load(std::memory_order_relaxed),bindings=remoteBindings.load(std::memory_order_relaxed),starts=remoteStarts.load(std::memory_order_relaxed);

@@ -1,0 +1,10 @@
+{
+  "id": "auto-restock",
+  "name": "AutoRestock",
+  "version": "0.3.0",
+  "author": "local",
+  "dll": "AutoRestock.dll",
+  "config": "config.json",
+  "schema": "config.schema.json",
+  "description": "AutoRestock 0.3.0 accepted-build delivery for exact Bedrock Windows x64 1.26.45.01,1.26.51.01,1.26.52.03. One DLL selects the exact profile automatically. Reuses the byte-identical user-tested 0.3.0-test3 DLL; internal build/log identifiers remain test3. The user reported normal use on all three versions. JSON-only main-hand refill from slots9-35; packaged threshold17 means remaining<=16. Genuine-depletion empty fallback,same-session ordinary replanning,1500ms serialization,65 guards and21 hooks retain tested behavior. No rebuild,new native address,hidden inventory UI,manual packet resend or EXE edit. Acceptance covers tested environments,not every server or recovery branch."
+}

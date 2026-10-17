@@ -1,0 +1,6 @@
+{
+  "name": "AutoRestock",
+  "entry": "AutoRestock.dll",
+  "version": "0.3.0",
+  "type": "preload-native"
+}

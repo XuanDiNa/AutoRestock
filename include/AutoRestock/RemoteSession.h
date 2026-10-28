@@ -25,14 +25,14 @@ public:
         Serial serial{};
         InventoryMode mode{};
     };
-    std::optional<Connection> Born(std::uintptr_t address,std::uintptr_t network,std::uint64_t guid) noexcept {
+    std::optional<Connection> Born(std::uintptr_t address,std::uintptr_t network,NativeConnectionIdentity identity) noexcept {
         if(Faulted())return {};
-        if(!address || !network || guid==std::numeric_limits<std::uint64_t>::max() || Find(address)){
+        if(!address || !network || !identity.Valid() || Find(address)){
             Poison();return {};
         }
         for(auto& record:records_)if(!record.connection.serial){
             auto serial=Issue();if(!serial)return {};
-            record={{address,network,serial},{},0,guid,false};
+            record={{address,network,serial},{},0,identity,false};
             auto& watch=watches_[&record-records_.data()];
             watch.network.store(network,std::memory_order_release);
             watch.connection.store(address,std::memory_order_release);return record.connection;
@@ -126,7 +126,7 @@ private:
         Connection connection;
         NativeNetworkBinding binding;
         std::uintptr_t handler{};
-        std::uint64_t guid{};
+        NativeConnectionIdentity identity;
         bool started{};
     };
     std::array<Record,Capacity> records_{};
@@ -152,7 +152,7 @@ private:
     }
     static bool Matches(Record const* record,NativePrimaryGuidRoute const& route) noexcept {
         return record && record->handler && record->handler==route.handler &&
-            record->binding==route.binding && record->guid==route.guid && route.activePeer;
+            record->binding==route.binding && record->identity==route.identity && route.activePeer;
     }
 };
 using RemoteSession=RemoteSessionLedger<>;

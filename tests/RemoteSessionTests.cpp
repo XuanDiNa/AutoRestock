@@ -18,6 +18,30 @@ template<class Ledger> auto Established(Ledger& ledger,std::uintptr_t address=10
     CHECK(ledger.Finish(*start,Route(address),70,80,90));return *start;
 }
 int main(){try{
+    // No GUID union bytes may impersonate a tagged kind3 identity. Both active
+    // payload words and the variant remain bound to constructor provenance.
+    for(std::uint8_t variant=0;variant<=2;++variant){
+        NativeConnectionIdentity id;id.kind=3;id.variant=variant;
+        if(variant)id.first=0x12345678;
+        if(variant==2)id.second=0xABCDEF12;
+        auto route=Route();route.identity=id;
+        RemoteSession session;auto birth=session.Born(100,30,id);CHECK(birth);
+        CHECK(session.Bind(*birth,{10,20,30},40));
+        auto begin=session.Begin(route,InventoryMode::Modern);CHECK(begin);
+        CHECK(session.Finish(*begin,route,70,80,90));
+        CHECK(session.Authorize(route,90,begin->serial));
+        for(int field=0;field<4;++field){
+            auto mismatch=route;
+            if(field==0)mismatch.identity.kind=0;
+            if(field==1)mismatch.identity.variant=3;
+            if(field==2)++mismatch.identity.first;
+            if(field==3)++mismatch.identity.second;
+            CHECK(!session.Authorize(mismatch,90,begin->serial));
+        }
+        session.RetireConnection(100);CHECK(!session.Authorize(route,90,begin->serial));
+        auto replacement=session.Born(100,30,id);CHECK(replacement && replacement->serial!=birth->serial);
+        CHECK(!session.Finish(*begin,route,70,80,90));
+    }
     // Missing native constructor/notification provenance cannot be repaired by
     // a readable current route or a successful-looking StartGame alone.
     RemoteSession missing;
@@ -37,7 +61,7 @@ int main(){try{
         auto wrong=Route();
         switch(field){case 0:wrong.binding.client++;break;case 1:wrong.binding.game++;break;
         case 2:wrong.binding.network++;break;case 3:wrong.handler++;break;
-        case 4:wrong.connection++;break;case 5:wrong.activePeer++;break;case 6:wrong.guid++;break;}
+        case 4:wrong.connection++;break;case 5:wrong.activePeer++;break;case 6:wrong.identity.first++;break;}
         CHECK(!ledger.Authorize(wrong,90,selected.generation));
     }
     CHECK(ledger.Select(91,80,70).backend==Backend::Unsupported);

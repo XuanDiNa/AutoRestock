@@ -14,6 +14,33 @@ template<class T> bool Read(void const* object,std::size_t offset,T& value) noex
 }
 bool Table(void const* object,std::size_t offset,std::uintptr_t expected) noexcept;
 }
+std::optional<NativeConnectionIdentity> ReadConnectionIdentity(void const* identifier) noexcept {
+    NativeConnectionIdentity id;
+    if(!Read(identifier,168,id.kind))return {};
+    if(id.kind==0){if(!Read(identifier,24,id.first) || !id.Valid())return {};}
+    else if(id.kind==3){
+        if(!Read(identifier,16,id.variant) || id.variant>2)return {};
+        if(id.variant && !Read(identifier,0,id.first))return {};
+        if(id.variant==2 && !Read(identifier,8,id.second))return {};
+    }else return {};
+    return id;
+}
+std::optional<NativeNetworkBinding> ReadAddressConnectionBinding(
+    NativeProfile const& profile,std::uintptr_t base,void const* adjusted,void const* identifier) noexcept {
+    if(FindNativeProfile(profile.version)!=&profile || !base || base>std::numeric_limits<std::uintptr_t>::max()-profile.imageExtent)return {};
+    auto id=ReadConnectionIdentity(identifier);
+    auto address=reinterpret_cast<std::uintptr_t>(adjusted);
+    if(!id || id->kind!=3 || address<profile.layout.networkSecondary)return {};
+    auto network=reinterpret_cast<void const*>(address-profile.layout.networkSecondary);
+    if(!Table(network,0,base+profile.Rva(0xE75E2D0)) || !Table(adjusted,0,base+profile.Rva(0xE75E2F0)))return {};
+    std::uintptr_t peer{},control{};
+    void const *registration{},*handler{},*client{};
+    if(!Read(network,216,peer) || !Read(network,224,control) || peer || control ||
+       !Read(network,profile.layout.networkRegistration,registration) || !Read(registration,0,handler) ||
+       !Table(handler,0,base+profile.Rva(0xE7AF110)) || !Read(handler,profile.layout.handlerClient,client))return {};
+    auto binding=ReadNetworkBinding(profile,base,client);
+    return binding && binding->network==reinterpret_cast<std::uintptr_t>(network)?binding:std::nullopt;
+}
 bool OnNativeMainThread(NativeProfile const& profile,std::uintptr_t base,std::uint32_t current) noexcept {
     if(FindNativeProfile(profile.version)!=&profile || !current || !base || base>std::numeric_limits<std::uintptr_t>::max()-profile.imageExtent)return false;
     auto slot=reinterpret_cast<void const*>(base+profile.Rva(0x11D2E3B8));
@@ -48,7 +75,7 @@ std::optional<NativePrimaryGuidRoute> ReadPrimaryGuidRoute(
         if(diagnostic)diagnostic->failure=reason;
         return {};
     };
-    if(!base || base>std::numeric_limits<std::uintptr_t>::max()-profile.imageExtent ||
+    if(FindNativeProfile(profile.version)!=&profile || !base || base>std::numeric_limits<std::uintptr_t>::max()-profile.imageExtent ||
         !Table(handler,0,base+profile.Rva(0xE7AF110)))return fail(NativeRouteFailure::Handler);
     void const* client{};
     if(!Read(handler,profile.layout.handlerClient,client))return fail(NativeRouteFailure::NetworkBinding);
@@ -58,14 +85,34 @@ std::optional<NativePrimaryGuidRoute> ReadPrimaryGuidRoute(
     void const *registration{},*registered{};
     std::uint8_t established{};
     std::uint32_t suppliedType{},savedType{};
-    std::uint64_t suppliedGuid{},savedGuid{};
     if(!Table(network,profile.layout.networkSecondary,base+profile.Rva(0xE75E2F0)) || !Read(network,profile.layout.networkRegistration,registration) ||
         !Read(registration,0,registered) || registered!=handler)return fail(NativeRouteFailure::Registration);
     if(!Read(handler,profile.layout.handlerEstablished,established) || established!=1)return fail(NativeRouteFailure::Established);
-    if(!Read(packetIdentifier,profile.layout.connectionType,suppliedType) || suppliedType!=0)return fail(NativeRouteFailure::SuppliedType);
-    if(!Read(handler,profile.layout.handlerType,savedType) || savedType!=0)return fail(NativeRouteFailure::SavedType);
-    if(!Read(packetIdentifier,profile.layout.connectionGuid,suppliedGuid) || !Read(handler,profile.layout.handlerGuid,savedGuid) ||
-        suppliedGuid!=savedGuid || suppliedGuid==std::numeric_limits<std::uint64_t>::max())return fail(NativeRouteFailure::Guid);
+    auto suppliedRead=Read(packetIdentifier,profile.layout.connectionType,suppliedType);
+    bool savedRead{};
+    if(diagnostic){
+        // Within the same proven owning callback, capture the handler's
+        // discriminator even if the supplied discriminator will be rejected.
+        // Do not inspect GUID/address payloads or scan any further on failure.
+        savedRead=Read(handler,profile.layout.handlerType,savedType);
+        diagnostic->typesObserved=true;
+        diagnostic->suppliedTypeRead=suppliedRead;diagnostic->savedTypeRead=savedRead;
+        if(suppliedRead)diagnostic->suppliedType=suppliedType;
+        if(savedRead)diagnostic->savedType=savedType;
+    }
+    if(!suppliedRead || (suppliedType!=0 && suppliedType!=3))return fail(NativeRouteFailure::SuppliedType);
+    if(!diagnostic)savedRead=Read(handler,profile.layout.handlerType,savedType);
+    if(!savedRead || savedType!=suppliedType)return fail(NativeRouteFailure::SavedType);
+    auto supplied=ReadConnectionIdentity(packetIdentifier);
+    auto savedAddress=reinterpret_cast<std::uintptr_t>(handler)+profile.layout.handlerType-profile.layout.connectionType;
+    auto saved=ReadConnectionIdentity(reinterpret_cast<void const*>(savedAddress));
+    if(diagnostic){
+        if(supplied && supplied->kind==3)diagnostic->suppliedVariant=supplied->variant;
+        if(saved && saved->kind==3)diagnostic->savedVariant=saved->variant;
+    }
+    if(!supplied || !saved || *supplied!=*saved)return fail(NativeRouteFailure::Guid);
+    if(suppliedType==3 && !ReadAddressConnectionBinding(profile,base,
+        reinterpret_cast<void const*>(binding->network+profile.layout.networkSecondary),packetIdentifier))return fail(NativeRouteFailure::NetworkBinding);
 
     // 16AF460/16AADF0 use the adjusted-network+160..168 vector. With the
     // proven raw+32 secondary receiver it is raw+192..200, capacity at208.
@@ -76,12 +123,13 @@ std::optional<NativePrimaryGuidRoute> ReadPrimaryGuidRoute(
         (last-first)%8 || (capacity-first)%8 || (last-first)/8>64)return fail(NativeRouteFailure::Vector);
     std::uintptr_t match{},activePeer{};
     for(auto position=first;position<last;position+=8){
-        void const* connection{};std::uint32_t type{};std::uint64_t guid{};
+        void const* connection{};std::uint32_t type{};
         if(!Read(reinterpret_cast<void const*>(position),0,connection) ||
             !Read(connection,profile.layout.connectionType,type))return fail(NativeRouteFailure::Entry);
-        if(type!=0)continue;
-        if(!Read(connection,profile.layout.connectionGuid,guid))return fail(NativeRouteFailure::Entry);
-        if(guid!=suppliedGuid)continue;
+        if(type!=suppliedType)continue;
+        auto identity=ReadConnectionIdentity(connection);
+        if(!identity)return fail(NativeRouteFailure::Entry);
+        if(*identity!=*supplied)continue;
         // Reject ambiguity even if it repeats the same allocation, and never
         // treat a retiring/missing peer as a still-live route.
         std::uint32_t state{};std::uint8_t removed{},closing{};
@@ -104,7 +152,7 @@ std::optional<NativePrimaryGuidRoute> ReadPrimaryGuidRoute(
     if(!match || match!=reinterpret_cast<std::uintptr_t>(packetIdentifier))return fail(NativeRouteFailure::Allocation);
     if(diagnostic)diagnostic->failure=NativeRouteFailure::None;
     return NativePrimaryGuidRoute{*binding,reinterpret_cast<std::uintptr_t>(handler),
-        match,activePeer,suppliedGuid};
+        match,activePeer,*supplied};
 }
 std::optional<NativeNetworkBinding> ReadPrimaryNotificationBinding(
     NativeProfile const& profile,std::uintptr_t base,void const* handler,void const* identifier) noexcept {
@@ -114,14 +162,17 @@ std::optional<NativeNetworkBinding> ReadPrimaryNotificationBinding(
     auto binding=ReadNetworkBinding(profile,base,client);if(!binding)return {};
     auto network=reinterpret_cast<void const*>(binding->network);
     void const *registration{},*registered{};std::uint8_t established{};
-    std::uint32_t suppliedType{},savedType{};std::uint64_t supplied{},saved{};
+    std::uint32_t suppliedType{},savedType{};
     if(!Table(network,profile.layout.networkSecondary,base+profile.Rva(0xE75E2F0)) || !Read(network,profile.layout.networkRegistration,registration) ||
        !Read(registration,0,registered) || registered!=handler ||
        !Read(handler,profile.layout.handlerEstablished,established) || established!=1 ||
-       !Read(identifier,profile.layout.connectionType,suppliedType) || suppliedType!=0 ||
-       !Read(handler,profile.layout.handlerType,savedType) || savedType!=0 ||
-       !Read(identifier,profile.layout.connectionGuid,supplied) || !Read(handler,profile.layout.handlerGuid,saved) || supplied!=saved ||
-       supplied==std::numeric_limits<std::uint64_t>::max())return {};
+       !Read(identifier,profile.layout.connectionType,suppliedType) || (suppliedType!=0 && suppliedType!=3) ||
+       !Read(handler,profile.layout.handlerType,savedType) || savedType!=suppliedType)return {};
+    auto supplied=ReadConnectionIdentity(identifier);
+    auto saved=ReadConnectionIdentity(reinterpret_cast<void const*>(reinterpret_cast<std::uintptr_t>(handler)+profile.layout.handlerType-profile.layout.connectionType));
+    if(!supplied || !saved || *supplied!=*saved)return {};
+    if(suppliedType==3 && !ReadAddressConnectionBinding(profile,base,
+        reinterpret_cast<void const*>(binding->network+profile.layout.networkSecondary),identifier))return {};
     return binding;
 }
 }

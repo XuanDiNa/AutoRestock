@@ -75,14 +75,17 @@ std::optional<NativePrimaryGuidRoute> TypedRemoteRoute(void* handler,void* ident
     return route;
 }
 std::uintptr_t HookRemoteReceive(std::uintptr_t a,std::uintptr_t b,std::uintptr_t c,std::uintptr_t d){
+    hookDiagnostics.Hit(HookCounter::RemoteReceiveEntry);
     if(!RemoteOwner())return originalRemoteReceive(a,b,c,d);
     bool nested=remoteReceiveFrame!=nullptr;
     if(nested)remote.Poison();
     RemoteReceiveFrame frame{a,!nested && !remote.Faulted() && Read<std::uintptr_t>(reinterpret_cast<void*>(a),0)==GameAddress(0xE7BE750)};
+    if(frame.valid)hookDiagnostics.Hit(HookCounter::RemoteReceiveValid);
     RemoteScope scope(remoteReceiveFrame,&frame);
     return originalRemoteReceive(a,b,c,d);
 }
 std::uintptr_t HookConnected(std::uintptr_t a,std::uintptr_t b,std::uintptr_t c,std::uintptr_t d){
+    hookDiagnostics.Hit(HookCounter::RemoteConnectedEntry);
     if(!RemoteOwner()){remote.Foreign(RemoteSession::Retired::Network,a>=32?a-32:0);return originalConnected(a,b,c,d);}
     if(remoteConnectedFrame)remote.Poison();
     bool valid=remoteReceiveFrame && remoteReceiveFrame->valid && !remote.Faulted() &&
@@ -90,28 +93,38 @@ std::uintptr_t HookConnected(std::uintptr_t a,std::uintptr_t b,std::uintptr_t c,
         Read<std::uintptr_t>(reinterpret_cast<void*>(remoteReceiveFrame->connector),8)==a &&
         Read<std::uintptr_t>(reinterpret_cast<void*>(a),0)==GameAddress(0xE75E2F0) &&
         Read<std::uintptr_t>(reinterpret_cast<void*>(a-32),0)==GameAddress(0xE75E2D0);
+    // Exact generic registration entry is also used by the native kind3
+    // transport. It has no RakNet receive frame; require its independently
+    // proven reciprocal registration and tagged address identity instead.
+    if(!valid && !remoteConnectedFrame && !remoteReceiveFrame && !remote.Faulted())
+        valid=ReadAddressConnectionBinding(*worldApi.profile,imageBase,reinterpret_cast<void*>(a),reinterpret_cast<void*>(b)).has_value();
+    if(valid)hookDiagnostics.Hit(HookCounter::RemoteConnectedValid);
     RemoteConnectedFrame frame{a>=32?a-32:0,b,valid,{}};RemoteScope scope(remoteConnectedFrame,&frame);
     return originalConnected(a,b,c,d);
 }
 std::uintptr_t HookConnectionConstruct(std::uintptr_t a,std::uintptr_t b,std::uintptr_t c,std::uintptr_t d,
     std::uintptr_t e,std::uintptr_t f,std::uintptr_t g,std::uintptr_t h,std::uintptr_t i){
+    hookDiagnostics.Hit(HookCounter::RemoteConstructEntry);
     auto frame=remoteConnectedFrame;
     bool observe=RemoteOwner() && frame && frame->valid && !remote.Faulted() && b==frame->identifier &&
         reinterpret_cast<std::uintptr_t>(_ReturnAddress())==GameAddress(0x16AF709);
-    std::uint32_t type=~0u;std::uint64_t guid=~0ULL;
-    if(observe){type=Read<std::uint32_t>(reinterpret_cast<void*>(b),168);guid=Read<std::uint64_t>(reinterpret_cast<void*>(b),24);}
+    if(observe)hookDiagnostics.Hit(HookCounter::RemoteConstructObserved);
+    auto identity=observe?ReadConnectionIdentity(reinterpret_cast<void*>(b)):std::nullopt;
     auto result=originalConnectionConstruct(a,b,c,d,e,f,g,h,i);
     if(observe && !remote.Faulted()){
-        if(frame->born || type!=0)remote.Poison();
-        else {frame->born=remote.Born(a,frame->network,guid);if(frame->born)remoteBirths.fetch_add(1,std::memory_order_relaxed);}
+        auto copied=ReadConnectionIdentity(reinterpret_cast<void*>(a));
+        if(frame->born || !identity || !copied || *identity!=*copied)remote.Poison();
+        else {frame->born=remote.Born(a,frame->network,*identity);if(frame->born)remoteBirths.fetch_add(1,std::memory_order_relaxed);}
     }
     return result;
 }
 std::uintptr_t HookHandlerConnected(std::uintptr_t a,std::uintptr_t b,std::uintptr_t c,std::uintptr_t d){
+    hookDiagnostics.Hit(HookCounter::RemoteNotifyEntry);
     if(!RemoteOwner()){remote.Foreign(RemoteSession::Retired::Handler,a);return originalHandlerConnected(a,b,c,d);}
     auto frame=remoteConnectedFrame;
     bool observe=RemoteOwner() && frame && frame->valid && frame->born && !remote.Faulted() && b==frame->identifier &&
         reinterpret_cast<std::uintptr_t>(_ReturnAddress())==GameAddress(0x16AF7B3);
+    if(observe)hookDiagnostics.Hit(HookCounter::RemoteNotifyObserved);
     auto result=originalHandlerConnected(a,b,c,d);
     if(observe){
         auto binding=ReadPrimaryNotificationBinding(*worldApi.profile,imageBase,reinterpret_cast<void*>(a),reinterpret_cast<void*>(b));

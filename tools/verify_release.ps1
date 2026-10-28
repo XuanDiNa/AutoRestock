@@ -45,7 +45,7 @@ try {
         $output = Join-Path $project "build/windows/x64/$buildMode"
         foreach ($test in $plainTests) { Run-Test "$buildMode/$test" (Join-Path $output "$test.exe") }
         foreach ($version in 45,51,52) {
-            foreach ($scenario in '--base','--unwind','--install','--lost-route','--admission','--state-one') {
+            foreach ($scenario in '--base','--unwind','--install','--lost-route','--admission','--state-one','--route-diagnostic','--type3','--type3-zero','--type3-one') {
                 Run-Test "$buildMode/RemoteHook/$scenario/$version" (Join-Path $output 'AutoRestockRemoteHookTests.exe') @($scenario,"$version")
             }
             Run-Test "$buildMode/Legacy/$version" (Join-Path $output 'AutoRestockLegacyTests.exe') @("$version")
@@ -62,14 +62,14 @@ foreach ($image in $beforeImages.Keys) {
 }
 $manifest = Get-Content -LiteralPath (Join-Path $project 'manifest.json') -Raw | ConvertFrom-Json
 $mod = Get-Content -LiteralPath (Join-Path $project 'mod.json') -Raw | ConvertFrom-Json
-if ($manifest.version -ne '0.3.1' -or $mod.version -ne $manifest.version -or $manifest.entry -ne 'AutoRestock.dll' -or $manifest.type -ne 'preload-native' -or $mod.dll -ne $manifest.entry) { throw 'Loader metadata mismatch.' }
+if ($manifest.version -ne '0.3.2' -or $mod.version -ne $manifest.version -or $manifest.entry -ne 'AutoRestock.dll' -or $manifest.type -ne 'preload-native' -or $mod.dll -ne $manifest.entry) { throw 'Loader metadata mismatch.' }
 $configText = Get-Content -LiteralPath (Join-Path $project 'config.json') -Raw
 if (-not ($configText | Test-Json -SchemaFile (Join-Path $project 'config.schema.json'))) { throw 'Invalid default config.' }
 $config = $configText | ConvertFrom-Json
 if ($config.enabled -ne $true -or $config.preRestockThreshold -ne 17) { throw 'Unexpected packaged defaults.' }
 if ($PackageZip) {
-    $artifacts = Get-Content -LiteralPath (Join-Path $project 'docs/release-artifacts-0.3.1.json') -Raw | ConvertFrom-Json
-    if ($artifacts.version -ne $manifest.version -or $artifacts.files.'AutoRestock.dll' -ne '1C87F52F1E3FB51E881A5ACF2396B6FD4270F54E02B1E899E87AD9F542CCD556') { throw 'Wrong frozen release artifact manifest.' }
+    $artifacts = Get-Content -LiteralPath (Join-Path $project 'docs/release-artifacts-0.3.2.json') -Raw | ConvertFrom-Json
+    if ($artifacts.version -ne $manifest.version -or $artifacts.files.'AutoRestock.dll' -ne 'C0583EA639AF0BA9D30F85205A29BC6D517612AFDF25230E0E176D29D37F0C79') { throw 'Wrong frozen release artifact manifest.' }
     $expectedZip = $artifacts.archiveSha256
     if ((Get-FileHash -LiteralPath $PackageZip -Algorithm SHA256).Hash -ne $expectedZip) { throw 'Not the official frozen ZIP.' }
     $files = @{}
@@ -98,5 +98,5 @@ if ($PackageZip) {
     SuppliedImagesReadOnlyVerified = $beforeImages.Count
     FrozenOfficialZipChecked = [bool]$PackageZip
     GameplayTested = $false; Installed = $false
-    Note = 'Fresh public-source offline checks; no game process control or release DLL replacement. Historical 123 development records and user gameplay acceptance are separate evidence.'
+    Note = 'Fresh public-source offline checks; no game process control or release DLL replacement. The 147 development records and three-version server gameplay acceptance are separate evidence.'
 } | ConvertTo-Json

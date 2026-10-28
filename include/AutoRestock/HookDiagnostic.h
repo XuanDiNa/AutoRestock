@@ -10,7 +10,9 @@ enum class HookCounter : unsigned {
     ServerEntry,ServerActive,ServerIdentityValid,ServerRoleLocal,ServerRoleServer,ServerCounts,
     ServerLocalStored,ServerLocalFresh,ServerRegistryDistinct,ServerUniqueMatch,ServerRuntimeMatch,
     DestroyEntry,DestroyLocal,DestroyCaptured,DestroyEnd,DestroyServer,DestroyServerCounts,
-    HurtEntry,HurtLocal,HurtCaptured,HurtBreak,HurtServer,Count
+    HurtEntry,HurtLocal,HurtCaptured,HurtBreak,HurtServer,
+    RemoteReceiveEntry,RemoteReceiveValid,RemoteConnectedEntry,RemoteConnectedValid,
+    RemoteConstructEntry,RemoteConstructObserved,RemoteNotifyEntry,RemoteNotifyObserved,Count
 };
 struct HookSnapshot {
     std::array<std::uint64_t,static_cast<unsigned>(HookCounter::Count)> values{};

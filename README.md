@@ -8,7 +8,7 @@ Automatic main-hand restocking for Minecraft Bedrock. Keep building when your st
 
 A client-side native DLL loaded through LeviLauncher. No behavior pack, server plugin, or companion protocol is required.
 
-[Download 0.3.1](https://github.com/XuanDiNa/AutoRestock/releases/tag/v0.3.1) · [Report an issue](https://github.com/XuanDiNa/AutoRestock/issues)
+[Download 0.3.2](https://github.com/XuanDiNa/AutoRestock/releases/tag/v0.3.2) · [Report an issue](https://github.com/XuanDiNa/AutoRestock/issues)
 
 ### Features
 
@@ -54,13 +54,13 @@ Settings reload automatically, usually within 500 ms. Invalid edits keep the las
 
 ### Notes and feedback
 
-**0.3.1 is a stable release.** Basic restocking and broken-tool replacement have been manually tested in single-player on all three supported versions. Multiplayer tool replacement, unusual item data, every server implementation, and long-duration edge cases still need broader testing. Follow your server's rules when using client plugins.
+**0.3.2 fixes block restocking on affected server connections.** The fix has been manually tested on all three supported versions. Basic single-player restocking and broken-tool replacement were also tested previously. Multiplayer tool replacement, unusual item data, other server implementations, and long-duration edge cases still need broader testing. Follow your server's rules when using client plugins.
 
-The release keeps the exact tested DLL, so its internal build/log identifier remains `0.3.1-test4`. Existing users of that build do not need to replace the DLL for this release.
+The release keeps the exact tested DLL, so its internal build/log identifier remains `0.3.2-test2`. Existing users of that build do not need to replace the DLL for this release.
 
 Feedback and issue reports are welcome! Include your exact game version, single-player or server environment, item and reserve details, steps to reproduce, and a relevant excerpt from `AutoRestock.log`. Remove personal information before sharing logs.
 
-Technical details: [verification and test coverage](https://github.com/XuanDiNa/AutoRestock/blob/main/docs/verification.md) · [release notes](https://github.com/XuanDiNa/AutoRestock/blob/main/docs/release-v0.3.1.md). Build and verification tools: [xmake](https://github.com/XuanDiNa/AutoRestock/blob/main/xmake.lua) · [verifier](https://github.com/XuanDiNa/AutoRestock/blob/main/tools/verify_release.ps1).
+Technical details: [verification and test coverage](https://github.com/XuanDiNa/AutoRestock/blob/main/docs/verification.md) · [release notes](https://github.com/XuanDiNa/AutoRestock/blob/main/docs/release-v0.3.2.md). Build and verification tools: [xmake](https://github.com/XuanDiNa/AutoRestock/blob/main/xmake.lua) · [verifier](https://github.com/XuanDiNa/AutoRestock/blob/main/tools/verify_release.ps1).
 
 Inspired by [Tweakeroo Hand Restock](https://github.com/maruohon/tweakeroo). This is an independent Bedrock adaptation, not an official port. See [third-party notices](THIRD_PARTY_NOTICES.txt). No project source license has been granted; public availability alone does not grant a license.
 
@@ -70,7 +70,7 @@ Inspired by [Tweakeroo Hand Restock](https://github.com/maruohon/tweakeroo). Thi
 
 透過 LeviLauncher 載入的客戶端原生 DLL 插件，不需要行為包、伺服器插件或配套協定。
 
-[下載 0.3.1](https://github.com/XuanDiNa/AutoRestock/releases/tag/v0.3.1) · [回報問題](https://github.com/XuanDiNa/AutoRestock/issues)
+[下載 0.3.2](https://github.com/XuanDiNa/AutoRestock/releases/tag/v0.3.2) · [回報問題](https://github.com/XuanDiNa/AutoRestock/issues)
 
 ### 主要功能
 
@@ -116,12 +116,12 @@ Inspired by [Tweakeroo Hand Restock](https://github.com/maruohon/tweakeroo). Thi
 
 ### 注意事項與回饋
 
-**0.3.1 為正式版。** 三個支援版本均已在單人世界人工測試基本補貨與工具損壞替換。伺服器上的工具替換、特殊物品資料、所有服務端組合及長時間邊界情境，仍需要更完整的測試。使用客戶端插件時，請遵守伺服器規則。
+**0.3.2 修復部分伺服器無法自動補充方塊的問題。** 三個支援版本均已人工測試這次修正，先前也已測試單人世界的基本補貨與工具損壞替換。伺服器上的工具替換、特殊物品資料、其他服務端組合及長時間邊界情境，仍需要更完整的測試。使用客戶端插件時，請遵守伺服器規則。
 
-正式版保留實測通過的原 DLL，因此內部建置與日誌仍顯示 `0.3.1-test4`。已正常使用這份 test4 的使用者，不必為本次正式發佈重換 DLL。
+正式版保留實測通過的原 DLL，因此內部建置與日誌仍顯示 `0.3.2-test2`。已正常使用這份 test2 的使用者，不必為本次正式發佈重換 DLL。
 
 歡迎回報問題或提出建議！請附上精確遊戲版本、單人或伺服器環境、物品與備品資料、重現步驟，以及 `AutoRestock.log` 的相關片段。公開日誌前，請先移除個人資訊。
 
-技術文件：[驗證與測試範圍](https://github.com/XuanDiNa/AutoRestock/blob/main/docs/verification.md) · [版本說明](https://github.com/XuanDiNa/AutoRestock/blob/main/docs/release-v0.3.1.md)。建置與驗證工具：[xmake](https://github.com/XuanDiNa/AutoRestock/blob/main/xmake.lua) · [驗證腳本](https://github.com/XuanDiNa/AutoRestock/blob/main/tools/verify_release.ps1)。
+技術文件：[驗證與測試範圍](https://github.com/XuanDiNa/AutoRestock/blob/main/docs/verification.md) · [版本說明](https://github.com/XuanDiNa/AutoRestock/blob/main/docs/release-v0.3.2.md)。建置與驗證工具：[xmake](https://github.com/XuanDiNa/AutoRestock/blob/main/xmake.lua) · [驗證腳本](https://github.com/XuanDiNa/AutoRestock/blob/main/tools/verify_release.ps1)。
 
 本專案參考 [Tweakeroo Hand Restock](https://github.com/maruohon/tweakeroo)，是獨立的基岩版適配實作，並非官方移植。第三方授權見[相關聲明](THIRD_PARTY_NOTICES.txt)。本專案未另行授予原始碼授權；公開可見不等於取得使用授權。

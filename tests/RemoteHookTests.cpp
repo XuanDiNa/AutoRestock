@@ -107,8 +107,9 @@ std::uintptr_t OriginalConstruct(std::uintptr_t a,std::uintptr_t b,std::uintptr_
 }
 std::uintptr_t OriginalNotify(std::uintptr_t a,std::uintptr_t b,std::uintptr_t c,std::uintptr_t d){
     CHECK(a==Key(fixture->handler.data()) && b==Key(fixture->identifier.data()) && c==111 && d==222);++notifyCalls;
-    Put(fixture->handler.data(),fixtureVersion==45?936:960,std::uint8_t{1});Put(fixture->handler.data(),fixtureVersion==45?672:696,std::uint64_t{77});
-    Put(fixture->handler.data(),fixtureVersion==45?816:840,std::uint32_t{});return 0x445566778899AABB;
+    Put(fixture->handler.data(),fixtureVersion==45?936:960,std::uint8_t{1});
+    std::memcpy(fixture->handler.data()+(fixtureVersion==45?648:672),reinterpret_cast<void const*>(b),176);
+    return 0x445566778899AABB;
 }
 std::uintptr_t OriginalManager(std::uintptr_t a,std::uintptr_t b,std::uintptr_t c,std::uintptr_t d){
     CHECK(a==Key(fixture->manager.data()) && b==Key(fixture->player.data()) && c==1 &&
@@ -205,6 +206,59 @@ int main(int argc,char** argv){try{
     nativeThreadId=[]()->std::uint32_t{return 12345;};
     ownerThread.store(0);status.store(1);runtime=nullptr;
     worldApi.localPlayer=LocalPlayer;worldApi.world=Level;
+    if(argc>1 && std::string(argv[1]).starts_with("--type3")){
+        // This generic native registration is reached without RakNet receive.
+        // The real constructor, notification and StartGame hooks must still
+        // establish a fresh generation, and retirement must revoke it.
+        auto variant=std::string(argv[1])=="--type3-zero"?0:std::string(argv[1])=="--type3-one"?1:2;
+        // Deliberately not the RakNet continuation: generic entry authority
+        // comes from reciprocal objects plus subsequent exact inner sites.
+        connectCall=reinterpret_cast<Opaque4>(calls.Add(0x100A105,reinterpret_cast<void*>(&HookConnected)));
+        Put(game.identifier.data(),168,std::uint32_t{3});Put(game.identifier.data(),16,static_cast<std::uint8_t>(variant));
+        Put(game.identifier.data(),0,std::uint64_t{0x12345678});Put(game.identifier.data(),8,std::uint64_t{0xABCDEF12});
+        std::memcpy(game.connection.data(),game.identifier.data(),176);
+        auto establish=[&]{
+            CHECK(connectCall(Key(game.network.data())+32,Key(game.identifier.data()),88,99)==0xABCD1234);
+            CHECK(HookEventPump(Key(&game.pump),22,23,24)==0xABCDEF0123456789);
+            auto event=remoteAdmissions.Pop();CHECK(event && event->stage==RemoteAdmissionStage::Accepted);
+        };
+        establish();CHECK(receiveCalls==0 && !remote.Faulted());
+        auto selection=remote.Select(Key(game.manager.data()),Key(game.player.data()),game.world);
+        CHECK(selection.backend==Backend::RemoteModern && selection.generation);
+        auto route=ReadPrimaryGuidRoute(*worldApi.profile,imageBase,game.handler.data(),game.connection.data());CHECK(route);
+        CHECK(remote.Authorize(*route,Key(game.manager.data()),selection.generation));
+        calls.Retarget(FixtureRva(0x16AC037),reinterpret_cast<void*>(&HookPacketResponse));expectResponseScope=true;
+        CHECK(HookEventPump(Key(&game.pump),22,23,24)==0xABCDEF0123456789);
+        calls.Retarget(FixtureRva(0x16AC037),reinterpret_cast<void*>(&HookStartGame));expectResponseScope=false;
+        expectRetired=true;HookConnectionDestroy(Key(game.connection.data()),2,3,4);
+        CHECK(!remote.Authorize(*route,Key(game.manager.data()),selection.generation));
+        establish();CHECK(remote.Generation()!=selection.generation);
+        HookClosing(Key(game.network.data())+32,2,3,4,5,6,7);CHECK(!remote.Generation());
+        Put(game.packet.data(),1600,std::uint8_t{});Put(game.manager.data(),8,std::uint8_t{});
+        establish();CHECK(remote.Select(Key(game.manager.data()),Key(game.player.data()),game.world).backend==Backend::RemoteOrdinary);
+        HookConnectionDestroy(Key(game.connection.data()),2,3,4);
+        // Still no late bootstrap from StartGame or a detached identifier.
+        HookEventPump(Key(&game.pump),22,23,24);auto missing=remoteAdmissions.Pop();CHECK(missing && missing->stage==RemoteAdmissionStage::Ledger);
+        auto birthsBefore=remoteBirths.load();
+        Put(game.network.data(),216,std::uintptr_t{1});
+        connectCall(Key(game.network.data())+32,Key(game.identifier.data()),88,99);
+        CHECK(remoteBirths.load()==birthsBefore && !remote.Generation());Put(game.network.data(),216,std::uintptr_t{});
+        Put(game.identifier.data(),16,std::uint8_t{3});
+        connectCall(Key(game.network.data())+32,Key(game.identifier.data()),88,99);
+        CHECK(remoteBirths.load()==birthsBefore && !remote.Generation() && !remote.Faulted());
+        Put(game.identifier.data(),16,static_cast<std::uint8_t>(variant));
+        // A constructor entered from any other inner site cannot mint birth.
+        constructCall=reinterpret_cast<Opaque9>(calls.Add(0x100B205,reinterpret_cast<void*>(&HookConnectionConstruct),true));
+        connectCall(Key(game.network.data())+32,Key(game.identifier.data()),88,99);
+        CHECK(remoteBirths.load()==birthsBefore && !remote.Generation());
+        // Foreign forwarding uses its own ABI fixture; no native reads.
+        originalConnected=+[](std::uintptr_t a,std::uintptr_t b,std::uintptr_t c,std::uintptr_t d)->std::uintptr_t{
+            CHECK(a==1 && b==1 && c==88 && d==99);return 0;
+        };
+        std::thread foreign([&]{HookConnected(1,1,88,99);});
+        foreign.join();
+        std::cout<<"PASS kind3 native generic registration without receive; full identity,modern/ordinary StartGame,response authority,retirement/reuse\n";return 0;
+    }
     if(argc>1 && std::string(argv[1])=="--lost-route"){
         loseStartRoute=true;Establish();
         CHECK(!remote.Generation() && !remote.Faulted());
@@ -223,6 +277,62 @@ int main(int argc,char** argv){try{
     CHECK(admissionText.find("mode=1")!=std::string::npos);
     CHECK(admissionText.find("state="+std::to_string(admission->route.state))!=std::string::npos);
     CHECK(admissionText.find("constructorObserved=1")!=std::string::npos);
+    if(argc>1 && std::string(argv[1])=="--route-diagnostic"){
+        // Missing/corrupt scalar diagnostics must be observable through the
+        // real reader + worker formatter without authorizing any new route.
+        CHECK(admissionText.find("typesObserved=1 suppliedTypeRead=1 suppliedType=0 savedTypeRead=1 savedType=0 typesMatch=1")!=std::string::npos);
+        auto summary=HookDiagnosticText(hookDiagnostics.Snapshot());
+        CHECK(summary.find("remoteReceiveEntry=1 remoteReceiveValid=1 remoteConnectedEntry=1 remoteConnectedValid=1 remoteConstructEntry=1 remoteConstructObserved=1 remoteNotifyEntry=1 remoteNotifyObserved=1")!=std::string::npos);
+        auto savedOffset=fixtureVersion==45?816:840;
+        auto handlerBefore=game.handler;auto connectionBefore=game.connection;
+        auto diagnose=[&](void const* identifier){
+            auto handlerAtRead=game.handler;auto connectionAtRead=game.connection;
+            RemoteAdmissionEvent event;
+            event.stage=RemoteAdmissionStage::Route;
+            CHECK(!ReadPrimaryGuidRoute(*worldApi.profile,imageBase,game.handler.data(),identifier,&event.route));
+            CHECK(game.handler==handlerAtRead && game.connection==connectionAtRead);
+            // Callers without diagnostics retain the same rejection result.
+            CHECK(!ReadPrimaryGuidRoute(*worldApi.profile,imageBase,game.handler.data(),identifier));
+            CHECK(game.handler==handlerAtRead && game.connection==connectionAtRead);
+            return AdmissionText(event);
+        };
+        Put(game.connection.data(),168,std::uint32_t{3});Put(game.handler.data(),savedOffset,std::uint32_t{3});
+        // Kind3 itself is now supported, but variant3 remains deliberately
+        // unknown; diagnostics must still report both readable kind values.
+        Put(game.connection.data(),16,std::uint8_t{3});
+        auto text=diagnose(game.connection.data());
+        CHECK(text.find("route=guid-mismatch")!=std::string::npos);
+        CHECK(text.find("typesObserved=1 suppliedTypeRead=1 suppliedType=3 savedTypeRead=1 savedType=3 typesMatch=1")!=std::string::npos);
+        Put(game.handler.data(),savedOffset,std::uint32_t{2});text=diagnose(game.connection.data());
+        CHECK(text.find("suppliedType=3 savedTypeRead=1 savedType=2 typesMatch=0")!=std::string::npos);
+        Put(game.connection.data(),168,~std::uint32_t{});text=diagnose(game.connection.data());
+        CHECK(text.find("suppliedTypeRead=1 suppliedType=4294967295")!=std::string::npos);
+        text=diagnose(reinterpret_cast<void*>(1));
+        CHECK(text.find("route=supplied-type")!=std::string::npos);
+        CHECK(text.find("typesObserved=1 suppliedTypeRead=0 suppliedType=-1 savedTypeRead=1 savedType=2 typesMatch=-1")!=std::string::npos);
+        Put(game.connection.data(),168,std::uint32_t{});text=diagnose(game.connection.data());
+        CHECK(text.find("route=saved-type")!=std::string::npos);
+        CHECK(text.find("suppliedTypeRead=1 suppliedType=0 savedTypeRead=1 savedType=2 typesMatch=0")!=std::string::npos);
+        game.connection=connectionBefore;game.handler=handlerBefore;
+        // Exercise the real StartGame hook: type3 still forwards the original
+        // exactly once and cannot create a generation, even with equal types.
+        HookConnectionDestroy(Key(game.connection.data()),2,3,4);
+        Put(game.connection.data(),168,std::uint32_t{3});Put(game.handler.data(),savedOffset,std::uint32_t{3});
+        Put(game.connection.data(),16,std::uint8_t{3});
+        auto before=startCalls;
+        CHECK(HookEventPump(Key(&game.pump),22,23,24)==0xABCDEF0123456789);
+        CHECK(startCalls==before+1 && !remote.Generation() && !remote.Faulted());
+        auto rejectedEvent=remoteAdmissions.Pop();CHECK(rejectedEvent && rejectedEvent->stage==RemoteAdmissionStage::Route);
+        CHECK(AdmissionText(*rejectedEvent).find("suppliedType=3 savedTypeRead=1 savedType=3 typesMatch=1")!=std::string::npos);
+        CHECK(!remoteAdmissions.Pop());
+        // Foreign callbacks must retain unobserved defaults, never read input.
+        originalStartGame=+[](void*,void*,void*){};
+        std::thread foreign([&]{HookStartGame(reinterpret_cast<void*>(1),reinterpret_cast<void*>(1),reinterpret_cast<void*>(1));});
+        foreign.join();auto excluded=remoteAdmissions.Pop();CHECK(excluded);
+        CHECK(excluded->stage==RemoteAdmissionStage::Foreign);
+        CHECK(AdmissionText(*excluded).find("typesObserved=0 suppliedTypeRead=0 suppliedType=-1 savedTypeRead=0 savedType=-1 typesMatch=-1")!=std::string::npos);
+        std::cout<<"PASS read-only route diagnostics distinguish type0/type3/mismatch/saved-type/unreadable/UINT32_MAX/foreign; native original forwarding and rejection unchanged\n";return 0;
+    }
     CHECK(admissionText.find(std::to_string(Key(game.handler.data())))==std::string::npos);
     CHECK(!remoteAdmissions.Pop());
     auto selected=remote.Select(Key(game.manager.data()),Key(game.player.data()),game.world);

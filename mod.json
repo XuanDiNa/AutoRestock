@@ -1,10 +1,10 @@
 {
   "id": "auto-restock",
   "name": "AutoRestock",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "author": "XuanDiNa",
   "dll": "AutoRestock.dll",
   "config": "config.json",
   "schema": "config.schema.json",
-  "description": "Automatic main-hand refill and broken-tool replacement for Minecraft Bedrock. Supports exact 1.26.45.01, 1.26.51.01 and 1.26.52.03. Stable delivery of the unchanged, user-tested 0.3.1-test4 DLL."
+  "description": "Automatic main-hand refill and broken-tool replacement for Minecraft Bedrock. Fixes block restocking on affected server connections. Supports exact 1.26.45.01, 1.26.51.01 and 1.26.52.03."
 }

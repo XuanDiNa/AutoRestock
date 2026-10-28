@@ -543,7 +543,13 @@ std::string AdmissionText(RemoteAdmissionEvent const& event){
     return "Admission ordinal="+std::to_string(event.ordinal)+" observedAt="+std::to_string(event.time)+
         " stage="+(stage<stages.size()?stages[stage]:"unknown")+" route="+(route<routes.size()?routes[route]:"unknown")+
         " mode="+std::to_string(event.mode)+" state="+std::to_string(event.route.state)+
-        " constructorObserved="+(event.constructorObserved?"1":"0");
+        " constructorObserved="+(event.constructorObserved?"1":"0")+
+        " typesObserved="+std::to_string(event.route.typesObserved)+
+        " suppliedTypeRead="+std::to_string(event.route.suppliedTypeRead)+" suppliedType="+std::to_string(event.route.suppliedType)+
+        " savedTypeRead="+std::to_string(event.route.savedTypeRead)+" savedType="+std::to_string(event.route.savedType)+
+        " typesMatch="+std::to_string(event.route.suppliedTypeRead && event.route.savedTypeRead?
+            static_cast<int>(event.route.suppliedType==event.route.savedType):-1)+
+        " suppliedVariant="+std::to_string(event.route.suppliedVariant)+" savedVariant="+std::to_string(event.route.savedVariant);
 }
 std::string HookDiagnosticText(HookSnapshot const& snapshot){
     constexpr char const* names[]={"operations","notReady","foreignOwner","nested","inventoryMatch","knownPlayer","managerMatch","remoteFault",
@@ -551,7 +557,9 @@ std::string HookDiagnosticText(HookSnapshot const& snapshot){
         "serverEntries","serverActive","serverIdentityValid","serverRoleLocal","serverRoleServer","serverCounts",
         "serverLocalStored","serverLocalFresh","serverRegistryDistinct","serverUniqueMatch","serverRuntimeMatch",
         "destroyEntries","destroyLocal","destroyCaptured","destroyEnd","destroyServer","destroyServerCounts",
-        "hurtEntries","hurtLocal","hurtCaptured","hurtBreak","hurtServer"};
+        "hurtEntries","hurtLocal","hurtCaptured","hurtBreak","hurtServer",
+        "remoteReceiveEntry","remoteReceiveValid","remoteConnectedEntry","remoteConnectedValid",
+        "remoteConstructEntry","remoteConstructObserved","remoteNotifyEntry","remoteNotifyObserved"};
     static_assert(std::size(names)==static_cast<unsigned>(HookCounter::Count));
     std::string line="HookTrace";
     for(unsigned n=0;n<std::size(names);++n)line+=" "+std::string(names[n])+"="+std::to_string(snapshot.values[n]);
@@ -726,7 +734,7 @@ DWORD WINAPI Worker(void*){
         std::wstring path(32768,L'\0');auto used=GetModuleFileNameW(module,path.data(),static_cast<DWORD>(path.size()));
         if(!used || used>=path.size()){status.store(-1,std::memory_order_release);return 0;}
         path.resize(used);directory=std::filesystem::path(path).parent_path();
-        Log("0.3.1-test4 native tool-hurt candidate starting; Bedrock 1.26.45.01,1.26.51.01,1.26.52.03; 23 hooks,67 loaded guards per admitted image; singleton full identity and same-ID native break-to-hand application; no guard bypass or acceptance/reconciliation change; manual gameplay validation pending");
+        Log("0.3.2-test2 kind3 session candidate starting; Bedrock 1.26.45.01,1.26.51.01,1.26.52.03; same 23 hooks,67 loaded guards per admitted image; tagged type0 GUID and kind3 variants0/1/2; generic kind3 registration without RakNet receive scope; exact constructor,notification,StartGame and retirement provenance retained; restock/transaction policy unchanged; manual server validation pending");
         auto game=GetModuleHandleW(nullptr);std::string error;
         auto native=BindNative(game,error);
         if(!native){Log("Inactive: "+error);status.store(-1,std::memory_order_release);return 0;}
@@ -748,7 +756,7 @@ DWORD WINAPI Worker(void*){
         runtime=new Runtime(*native,*world,imageBase,integrated);
         if(!InstallHooks()){Log("Inactive: guarded hook installation failed");status.store(-1,std::memory_order_release);return 0;}
         status.store(1,std::memory_order_release);
-        Log("Ready: 0.3.1-test4; 23 guarded hooks; 67 loaded guards; singleton full identity and exact-ID native tool break; HookTrace includes hurt entry/local/capture/break/server counters; changed HookTrace at most once per2000ms; worker-only formatting and log I/O; JSON-only,main hand from slots9-35; manual gameplay validation pending");
+        Log("Ready: 0.3.2-test2; 23 guarded hooks; 67 loaded guards; kind3-session=1; Admission includes type read/value/match and copied active variants only; HookTrace connection-flow counters retained; worker-only formatting and log I/O; JSON-only,main hand from slots9-35; restock/transaction policy unchanged; manual server validation pending");
         HookDiagnosticReporter hookReporter;
         std::string previousError=reload.Error();
         int previousSession=-1,previousMode=-2;std::uint64_t previousGeneration{},previousBirths{},previousBindings{},previousStarts{},previousStartCalls{};

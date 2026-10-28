@@ -57,6 +57,41 @@ struct RouteFixture : Fixture {
     auto Route(){return ReadPrimaryGuidRoute(*FindNativeProfile(GameVersion::V52),base,handler.data(),connection.data());}
 };
 int main(){try{
+    // D95C40 kind3 compares only the active variant payload, never GUID24.
+    // A matching live allocation is still mandatory; local-peer routes stay out.
+    for(std::uint8_t variant=0;variant<=2;++variant){
+        RouteFixture f;
+        auto set=[&](void* p,std::size_t o){
+            Put(p,o+168,std::uint32_t{3});Put(p,o+16,variant);
+            Put(p,o,std::uint64_t{0x12345678});Put(p,o+8,std::uint64_t{0xABCDEF12});
+        };
+        set(f.connection.data(),0);set(f.handler.data(),672);
+        // Inactive GUID-union bytes must not affect kind3 identity.
+        Put(f.connection.data(),24,~std::uint64_t{});
+        CHECK(f.Route());
+        CHECK(ReadPrimaryNotificationBinding(*FindNativeProfile(GameVersion::V52),base,f.handler.data(),f.connection.data()));
+        if(variant){Put(f.handler.data(),672,std::uint64_t{0x12345679});CHECK(!f.Route());set(f.handler.data(),672);}
+        if(variant==2){Put(f.handler.data(),680,std::uint64_t{0xABCDEF13});CHECK(!f.Route());set(f.handler.data(),672);}
+        Put(f.handler.data(),688,std::uint8_t{3});CHECK(!f.Route());set(f.handler.data(),672);
+        Put(f.network.data(),216,std::uintptr_t{1});CHECK(!f.Route());Put(f.network.data(),216,std::uintptr_t{});
+        Put(f.network.data(),224,std::uintptr_t{1});CHECK(!f.Route());Put(f.network.data(),224,std::uintptr_t{});
+        CHECK(!ReadAddressConnectionBinding(*FindNativeProfile(GameVersion::V52),base,f.network.data()+32,reinterpret_cast<void*>(1)));
+        CHECK(!ReadConnectionIdentity(reinterpret_cast<void*>(1)));
+        auto detached=f.connection;
+        CHECK(!ReadPrimaryGuidRoute(*FindNativeProfile(GameVersion::V52),base,f.handler.data(),detached.data()));
+        f.otherConnection=f.connection;f.entries[1]=reinterpret_cast<std::uintptr_t>(f.otherConnection.data());
+        Put(f.network.data(),200,reinterpret_cast<std::uintptr_t>(f.entries.data())+16);CHECK(!f.Route());
+        Put(f.network.data(),200,reinterpret_cast<std::uintptr_t>(f.entries.data())+8);
+        for(int fault=0;fault<5;++fault){
+            auto before=f.connection;
+            if(fault==0)Put(f.connection.data(),176,std::uint32_t{2});
+            if(fault==1)Put(f.connection.data(),408,std::uint8_t{1});
+            if(fault==2)Put(f.connection.data(),409,std::uint8_t{1});
+            if(fault==3)Put(f.connection.data(),280,std::uintptr_t{});
+            if(fault==4)Put(f.connection.data(),16,std::uint8_t{3});
+            CHECK(!f.Route());f.connection=before;
+        }
+    }
     {
         RouteFixture f;
         Put(f.client.data(),0,base+0xE774DB0);Put(f.client.data(),424,std::uintptr_t{});
@@ -119,7 +154,7 @@ int main(){try{
         CHECK(route->binding.network==reinterpret_cast<std::uintptr_t>(f.network.data()));
         CHECK(route->handler==reinterpret_cast<std::uintptr_t>(f.handler.data()));
         CHECK(route->connection==reinterpret_cast<std::uintptr_t>(f.connection.data()));
-        CHECK(route->activePeer==0x1234);CHECK(route->guid==0x1122334455667788);
+        CHECK(route->activePeer==0x1234);CHECK(route->identity==NativeConnectionIdentity{0x1122334455667788});
         CHECK(f.network==networkBefore && f.handler==handlerBefore);
         CHECK(f.connection==connectionBefore && f.packet==packetBefore);
     }
